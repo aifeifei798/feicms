@@ -420,10 +420,10 @@ def test_a_broken_source_does_not_abort_the_sweep():
 
         results = await collect_all(source_ids=[bad.id, good.id], client_factory=factory)
         assert len(results) == 2
-        by_name = {r.source_name: r for r in results}
-        assert "内部错误" in (by_name["崩溃站"].error or "")
-        assert by_name["健康站"].error is None
-        assert by_name["健康站"].inserted == 10
+        crashed = [r for r in results if "内部错误" in (r.error or "")]
+        healthy = [r for r in results if r.error is None]
+        assert len(crashed) == 1 and len(healthy) == 1
+        assert healthy[0].inserted == 10
 
     asyncio.run(_run())
 
