@@ -2,6 +2,7 @@
 # feicms 服务端管理脚本
 #
 #   ./server.sh start          启动（后台，日志写到 data/server.log）
+#   ./server.sh start --user admin --password xxx   先写入 .env 的账号再启动
 #   ./server.sh stop           停止
 #   ./server.sh restart        重启
 #   ./server.sh status         查看运行状态 / 健康 / 是否开启登录
@@ -65,6 +66,29 @@ is_running() {
 }
 
 cmd_start() {
+  # 可选：./server.sh start --user admin --password xxx  -> 先写 .env 再启动
+  local user="" password=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --user) user="${2:-}"; shift 2 ;;
+      --user=*) user="${1#--user=}"; shift ;;
+      --password) password="${2:-}"; shift 2 ;;
+      --password=*) password="${1#--password=}"; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  if [ -n "$user" ] || [ -n "$password" ]; then
+    if [ -z "$password" ]; then
+      run_py feicms passwd --user "${user:-admin}"
+    else
+      run_py feicms passwd --user "${user:-admin}" --password "$password"
+    fi
+    if is_running; then
+      cmd_stop
+    fi
+  fi
+
   if is_running; then
     echo "服务已在运行 (pid $(cat "$PID_FILE"))"
     return 0
@@ -190,7 +214,7 @@ command="${1:-help}"
 shift || true
 
 case "$command" in
-  start) cmd_start ;;
+  start) cmd_start "$@" ;;
   stop) cmd_stop ;;
   restart) cmd_restart ;;
   status) cmd_status ;;
