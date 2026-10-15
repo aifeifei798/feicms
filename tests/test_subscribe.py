@@ -15,15 +15,15 @@ from feicms.models import Source, Subscription  # noqa: E402
 from feicms.subscribe import detect_kind, parse_subscription, sync_subscription  # noqa: E402
 
 JSON_FEED = """[
-  {"name": "360资源站", "api": "https://360zy.com/api.php/provide/vod/", "apiType": "json",
+  {"name": "示例资源站", "api": "https://a.example.com/api.php/provide/vod/", "apiType": "json",
    "uptime": "99.999%", "totalResources": 65092, "categories": []},
-  {"name": "大地资源站", "api": "https://dadiapi.com/api.php", "apiType": "xml",
+  {"name": "示例XML站", "api": "https://b.example.com/api.php", "apiType": "xml",
    "uptime": "100%", "totalResources": 277283, "categories": ["日韩"]}
 ]"""
 
 TXT_FEED = """# 资源组
-360资源站|https://360zy.com/api.php/provide/vod/|json|99.999%
-大地资源站|https://dadiapi.com/api.php|xml|100%
+示例资源站|https://a.example.com/api.php/provide/vod/|json|99.999%
+示例XML站|https://b.example.com/api.php|xml|100%
 新站|https://new.example.com/api.php/provide/vod/|json|98%
 """
 
@@ -48,7 +48,7 @@ def test_detect_kind():
 def test_parse_json_feed():
     entries = parse_subscription(JSON_FEED, "json")
     assert len(entries) == 2
-    assert entries[0]["name"] == "360资源站"
+    assert entries[0]["name"] == "示例资源站"
     assert entries[0]["api_format"] == "json"
     assert entries[0]["uptime"] == 99.999
     assert entries[0]["priority"] == 999

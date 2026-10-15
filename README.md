@@ -1,5 +1,7 @@
 # feicms
 
+[![test](https://github.com/aifeifei798/feicms/actions/workflows/test.yml/badge.svg)](https://github.com/aifeifei798/feicms/actions/workflows/test.yml)
+
 资源站（采集站）聚合系统：把多个 `api.php/provide/vod` 类型的站点统一采集进一个数据库，提供 FastAPI 查询接口、CLI 运维工具和一个 DaisyUI 管理面板。
 
 ```

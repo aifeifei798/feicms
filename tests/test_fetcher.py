@@ -20,7 +20,7 @@ def test_build_query_overwrites_page_params():
 
 
 def test_origin():
-    assert origin("https://360zy.com/api.php/provide/vod/") == "https://360zy.com"
+    assert origin("https://a.example.com/api.php/provide/vod/") == "https://a.example.com"
 
 
 def test_profiles_are_valid_for_installed_curl_cffi():

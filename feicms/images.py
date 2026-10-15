@@ -50,9 +50,8 @@ MAGIC_EXT = {
 }
 
 # Image hosts that hotlink-block plain requests; a Referer usually fixes them.
-REFERER_BY_HOST = {
-    "img.52km.net": "https://www.52km.net/",
-}
+# Add entries as you discover them, e.g. "img.example.net": "https://www.example.net/".
+REFERER_BY_HOST: dict[str, str] = {}
 
 
 def normalize_image_url(url: str) -> str | None:

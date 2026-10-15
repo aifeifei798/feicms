@@ -3,7 +3,7 @@
 Supported shapes:
   * mackin JSON:   {"code":1,"list":[{vod_id, vod_name, ...}]}
   * json.php:      same as above (kxgav / msnii / pgxdy ...)
-  * RSS/XML:       <video><id><name><type><dt><note>...  (dadiapi)
+  * RSS/XML:       <video><id><name><type><dt><note>...  (XML 站点)
   * bare list:     [{"id":..,"name":..}]
 """
 

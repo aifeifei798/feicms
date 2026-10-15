@@ -120,7 +120,7 @@ class SourceItem(Base):
 
     play_from: Mapped[str] = mapped_column(String(300), default="")
     play_url: Mapped[str] = mapped_column(Text, default="")
-    # parsed: [{"from": "360zy", "episodes": [{"name": "第01集", "url": "https://..."}]}]
+    # parsed: [{"from": "example", "episodes": [{"name": "第01集", "url": "https://..."}]}]
     plays: Mapped[str] = mapped_column(Text, default="[]")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

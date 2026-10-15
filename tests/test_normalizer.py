@@ -9,9 +9,9 @@ from feicms.normalizer import (
 
 
 def test_parse_play_url_dollar_separator():
-    plays = parse_play_url("360zy", "第01集$https://a/1.m3u8#第02集$https://a/2.m3u8")
+    plays = parse_play_url("example", "第01集$https://a/1.m3u8#第02集$https://a/2.m3u8")
     assert len(plays) == 1
-    assert plays[0].from_name == "360zy"
+    assert plays[0].from_name == "example"
     assert [e.name for e in plays[0].episodes] == ["第01集", "第02集"]
     assert plays[0].episodes[1].url == "https://a/2.m3u8"
 
@@ -68,7 +68,7 @@ def test_parse_response_xml_rss():
         '<?xml version="1.0" encoding="utf-8"?><rss version="5.1">'
         '<list page="1" pagecount="10" pagesize="20" recordcount="200">'
         '<video><last>2024-01-01 00:00:00</last><id>7</id><tid>3</tid>'
-        '<name><![CDATA[示例视频]]></name><type>日韩</type><dt>dadim3u8</dt>'
+        '<name><![CDATA[示例视频]]></name><type>日韩</type><dt>example3u8</dt>'
         '<note><![CDATA[HD]]></note></video></list></rss>'
     )
     items, pagecount, total = parse_response(payload, "xml")

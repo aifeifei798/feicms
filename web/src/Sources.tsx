@@ -374,7 +374,7 @@ function SourceForm({
           <div className="form-control">
             <label className="label"><span className="label-text">API URL</span></label>
             <input className="input input-bordered" value={form.url} onChange={(e) => set("url", e.target.value)} />
-            <span className="muted mt-1">例：https://dadiapi.com/api.php</span>
+            <span className="muted mt-1">例：https://example.com/api.php</span>
           </div>
 
           <div className="grid grid-cols-3 gap-2 mt-2">
