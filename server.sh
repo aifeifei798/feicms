@@ -13,6 +13,9 @@
 #   ./server.sh build          构建前端 (pnpm/npm)
 #   ./server.sh init           init-db + seed
 #   ./server.sh collect [--full] [--pages N]
+#   ./server.sh full           后台全量扫描（每站真实页数），日志 data/collect.log
+#   ./server.sh full-status    全量扫描进度 + 最近日志
+#   ./server.sh full-stop      停止后台全量扫描
 #   ./server.sh health         探测所有站点
 #   ./server.sh images scan|download|stats|repair|prune
 #   ./server.sh passwd [--user admin] [--password xxx]
@@ -25,6 +28,9 @@ cd "$ROOT"
 
 PID_FILE="$ROOT/data/server.pid"
 LOG_FILE="$ROOT/data/server.log"
+COLLECT_LOG="$ROOT/data/collect.log"
+COLLECT_PID="$ROOT/data/collect.pid"
+COLLECT_LOCK="$ROOT/data/collect.lock"
 
 load_env() {
   if [ -f "$ROOT/.env" ]; then
@@ -264,6 +270,91 @@ cmd_build() {
   fi
 }
 
+# 全量扫描：把每个站点真实报告的页数全部遍历一遍，后台跑，不用开网页。
+#   ./server.sh full                          所有启用的站点
+#   ./server.sh full --name "360资源站"       只扫一个站点
+#   ./server.sh full --delay 0.5 --concurrency 8
+py_cmd() {
+  if command -v uv >/dev/null 2>&1; then
+    echo "uv run feicms"
+  elif [ -x "$ROOT/.venv/bin/feicms" ]; then
+    echo "$ROOT/.venv/bin/feicms"
+  else
+    echo ""
+  fi
+}
+
+cmd_full() {
+  load_env
+  if [ -f "$COLLECT_LOCK" ]; then
+    echo "全量扫描已在进行中：$(cat "$COLLECT_LOCK")"
+    echo "看进度: ./server.sh full-status   或 tail -f $COLLECT_LOG"
+    return 0
+  fi
+  local cmd
+  cmd="$(py_cmd)"
+  if [ -z "$cmd" ]; then
+    echo "未找到 uv，也没有 .venv。先运行 ./install.sh"
+    exit 1
+  fi
+  local args="" a
+  for a in "$@"; do
+    args="$args $(printf '%q' "$a")"
+  done
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
+  else
+    nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
+  fi
+  echo $! > "$COLLECT_PID"
+  echo "全量扫描已启动 (pid $!)，日志: $COLLECT_LOG"
+  echo "看进度: ./server.sh full-status   或 tail -f $COLLECT_LOG"
+  echo "停止:   ./server.sh full-stop"
+}
+
+cmd_full_status() {
+  load_env
+  if [ -f "$COLLECT_PID" ]; then
+    pid="$(cat "$COLLECT_PID")"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "扫描进程运行中 (pid $pid)"
+    else
+      echo "扫描进程已退出 (pid $pid)"
+    fi
+  else
+    echo "没有记录到扫描进程"
+  fi
+  if [ -f "$COLLECT_LOCK" ]; then
+    echo "锁: $(cat "$COLLECT_LOCK")"
+  else
+    echo "锁已释放（本轮已结束）"
+  fi
+  if [ -f "$COLLECT_LOG" ]; then
+    echo "最近 20 行 ($COLLECT_LOG):"
+    tail -20 "$COLLECT_LOG"
+  fi
+}
+
+cmd_full_stop() {
+  if [ -f "$COLLECT_PID" ]; then
+    pid="$(cat "$COLLECT_PID")"
+    if kill -0 "$pid" 2>/dev/null; then
+      if command -v setsid >/dev/null 2>&1; then
+        kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      else
+        kill -TERM "$pid" 2>/dev/null
+      fi
+      echo "已停止 (pid $pid)"
+    else
+      echo "扫描进程已退出"
+    fi
+    rm -f "$COLLECT_PID"
+  fi
+  pkill -f "feicms collect --full" 2>/dev/null || true
+  rm -f "$COLLECT_LOCK"
+  echo "锁已释放"
+}
+
 usage() {
   awk 'NR > 1 { if (substr($0, 1, 1) != "#") exit; print substr($0, 2) }' "$0"
 }
@@ -282,6 +373,9 @@ case "$command" in
   build) cmd_build ;;
   init) run_py feicms init-db && run_py feicms seed ;;
   collect) run_py feicms collect "$@" ;;
+  full) cmd_full "$@" ;;
+  full-status) cmd_full_status ;;
+  full-stop) cmd_full_stop ;;
   health) run_py feicms health ;;
   stats) run_py feicms stats ;;
   images) run_py feicms images "$@" ;;

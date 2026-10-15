@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from sqlalchemy import delete, func, select, update
@@ -18,6 +21,8 @@ from .models import CollectJob, Image, Source, SourceItem, SourceType, Video
 from .normalizer import VodItem, build_signature, clean_text, parse_play_url, parse_raw_items, parse_response
 from .db import session
 
+log = logging.getLogger("feicms.collector")
+
 # Absolute runaway guard: only used when a source reports neither pagecount nor
 # total and keeps handing back new items. A real full sweep is bounded by the
 # pagecount the source itself reports.
@@ -25,6 +30,58 @@ RUNAWAY_PAGE_GUARD = 10000
 # A source that fails this many pages in a row is unreachable/rate-limiting, so
 # the sweep stops instead of walking thousands of pages.
 MAX_CONSECUTIVE_PAGE_FAILURES = 5
+
+
+def acquire_collect_lock(label: str = "collect") -> bool:
+    """Best-effort cross-process lock.
+
+    A long `feicms collect --full` running from the shell and the service's own
+    auto-collect loop would otherwise walk the same database twice at once.
+    A lock older than FEICMS_LOCK_TTL hours is treated as stale (crashed run).
+    """
+    path = Path(settings.lock_file)
+    if path.exists():
+        try:
+            info = json.loads(path.read_text())
+            started = datetime.fromisoformat(info.get("started_at", ""))
+        except (ValueError, OSError, json.JSONDecodeError):
+            return False
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - started < timedelta(hours=settings.lock_ttl_hours):
+            return False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "label": label,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        )
+    except OSError:
+        return False
+    return True
+
+
+def release_collect_lock() -> None:
+    try:
+        Path(settings.lock_file).unlink()
+    except OSError:
+        pass
+
+
+def collect_lock_info() -> dict[str, Any] | None:
+    """Who is holding the collection lock, or None when nobody is."""
+    path = Path(settings.lock_file)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (ValueError, OSError, json.JSONDecodeError):
+        return None
 
 
 @dataclass
@@ -384,6 +441,14 @@ async def collect_all(
     async with session() as s:
         sources = await _select_sources(s, names, only_enabled, source_ids)
 
+    if not acquire_collect_lock("collect"):
+        holder = collect_lock_info() or {}
+        log.warning(
+            "another collection sweep is running (pid %s), skipping this one",
+            holder.get("pid", "?"),
+        )
+        return []
+
     # 0 (default) means "no ceiling": every source is a separate site, so all of
     # them are walked at once. A positive number throttles how many run together.
     limit = settings.concurrency
@@ -391,7 +456,11 @@ async def collect_all(
 
     async def run(src: Source) -> CollectResult:
         client = client_factory() if client_factory is not None else None
-        page_cb = (lambda snap: on_progress(src.id, snap)) if on_progress is not None else None
+        page_cb = (
+            (lambda snap: on_progress(src.id, {**snap, "name": src.name}))
+            if on_progress is not None
+            else None
+        )
         if sem is None:
             result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
         else:
@@ -401,7 +470,10 @@ async def collect_all(
             on_result(result)
         return result
 
-    return await asyncio.gather(*(run(src) for src in sources))
+    try:
+        return await asyncio.gather(*(run(src) for src in sources))
+    finally:
+        release_collect_lock()
 
 
 # ---------------------------------------------------------------- background sweeps

@@ -157,6 +157,16 @@ body {
   margin-top: 0.25rem;
   font-size: 0.75rem;
 }
+.cli-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+}
+.cli-hint code {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.1rem 0.35rem;
+}
 
 .nav-actions {
   display: flex;

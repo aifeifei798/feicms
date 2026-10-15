@@ -5,6 +5,7 @@ import json
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -190,15 +191,40 @@ def collect(
     include_disabled: bool = typer.Option(False, "--include-disabled"),
     pages: int = typer.Option(None, "--pages", help="pages per source; 0 = full sweep of every page"),
     full: bool = typer.Option(False, "--full", help="equivalent to --pages 0: walk all pages the source reports"),
+    concurrency: int = typer.Option(
+        None, "--concurrency", help="override FEICMS_CONCURRENCY for this run (0 = every source at once)"
+    ),
+    delay: float = typer.Option(None, "--delay", help="override FEICMS_DELAY: seconds between page requests"),
+    heartbeat: int = typer.Option(50, "--heartbeat", help="print a progress line every N pages (0 = off)"),
 ) -> None:
-    """Run collection now (all enabled sources, or one by --name)."""
+    """Run collection now (all enabled sources, or one by --name).
+
+    `--full` walks every page each source reports. It is meant to be left running
+    on the server: `./server.sh full` starts it in the background.
+    """
 
     async def _run() -> None:
+        if concurrency is not None:
+            settings.concurrency = concurrency
+        if delay is not None:
+            settings.request_delay = delay
+
         names = [name] if name else None
         effective_pages = 0 if full else pages
-        results = await collect_all(names=names, pages=effective_pages, only_enabled=not include_disabled)
-        for r in results:
-            status = "OK" if not r.error else "FAIL"
+
+        def on_progress(source_id: int, snap: dict[str, Any]) -> None:
+            if not heartbeat or not snap.get("pages"):
+                return
+            if snap["pages"] % heartbeat:
+                return
+            total = snap.get("pagecount") or "?"
+            console.print(
+                f"[dim]进度 {snap.get('name', source_id)}: {snap['pages']}/{total} 页 "
+                f"(新增 {snap.get('inserted', 0)}, 更新 {snap.get('updated', 0)})[/dim]"
+            )
+
+        def on_result(r: CollectResult) -> None:
+            status = "OK" if not (r.error or r.stopped_reason) else "FAIL"
             scope = f"{r.pages}/{r.pagecount or '?'}页"
             note = r.error or r.stopped_reason or ""
             if r.warnings:
@@ -207,6 +233,23 @@ def collect(
                 f"[{status}] {r.source_name}: {scope} new={r.inserted} updated={r.updated} "
                 f"skipped={r.skipped} total={r.total} {r.elapsed_ms / 1000:.1f}s {note}"
             )
+
+        results = await collect_all(
+            names=names,
+            pages=effective_pages,
+            only_enabled=not include_disabled,
+            on_result=on_result,
+            on_progress=on_progress,
+        )
+        if not results:
+            console.print("[yellow]另一轮采集正在进行中，本轮未启动。[/yellow]")
+            return
+        done = sum(1 for r in results if not (r.error or r.stopped_reason))
+        console.print(
+            f"[green]完成[/green] {done}/{len(results)} 个站点，"
+            f"新增 {sum(r.inserted for r in results)}，更新 {sum(r.updated for r in results)}，"
+            f"跳过 {sum(r.skipped for r in results)} 条重复"
+        )
 
     asyncio.run(_run())
 

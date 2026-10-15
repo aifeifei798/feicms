@@ -126,6 +126,11 @@ export default function Collect({ notify }: { notify: Notify }) {
         </span>
       </div>
 
+      <p className="cli-hint muted">
+        不想开网页：在服务器上跑 <code>./server.sh full</code>，后台全量扫描；
+        日志 <code>data/collect.log</code>，进度 <code>./server.sh full-status</code>，停止 <code>./server.sh full-stop</code>
+      </p>
+
       <div className="card bg-base-100 border border-base-300">
         <div className="card-body">
           <div className="sweep-summary">

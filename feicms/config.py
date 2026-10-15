@@ -68,6 +68,10 @@ class Settings:
     # source reports; this only caps sources that report no pagecount at all.
     # 0 = no ceiling, i.e. a real full sweep of every page.
     full_page_cap: int = _env_int("FEICMS_FULL_PAGE_CAP", 0)
+    # Lock file so a CLI sweep (`feicms collect --full`) and the service's own
+    # auto-collect never walk the same database at the same time.
+    lock_file: str = _env("FEICMS_LOCK_FILE", str(BASE_DIR / "data" / "collect.lock"))
+    lock_ttl_hours: float = float(_env("FEICMS_LOCK_TTL", "12"))
 
     # Images (vod_pic posters). Files are sharded by sha256 of the image bytes:
     #   <image_dir>/<sha[0:2]>/<sha[2:4]>/<sha>.<ext>

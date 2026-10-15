@@ -143,7 +143,19 @@ GET  /api/sources/export?fmt=yaml|json|csv
 
 一轮全量中**单页超时不会中断整轮**：失败的页会被跳过并记录，只有连续 5 页失败才认为该站不可达并停止（进度表会显示「跳过 N 页」和停止原因）。第 1 页失败才算该站采集失败。
 
-管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress`。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
+管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress`。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect/start` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
+
+不想开网页时，直接丢在服务器上跑：
+
+```bash
+./server.sh full                              # 所有启用的站点，后台运行
+./server.sh full --name "360资源站"           # 只扫一个站点
+./server.sh full --delay 0.5 --concurrency 8  # 更慢 / 更保守
+./server.sh full-status                       # 进度 + 最近日志
+./server.sh full-stop                         # 停止
+```
+
+`full` 用 `nohup` 启动，SSH 断开也继续跑，日志写到 `data/collect.log`（每 50 页一行进度，每个站点完成时一行结果）。CLI 和服务的自动采集共用一个锁文件 `data/collect.lock`，所以全量扫描期间服务自己的定时采集会自动跳过，不会两轮并发写同一个库。
 
 「采集」页面（侧栏 数据 → 采集）是采集的唯一入口：总进度条 + 每个站点一行，状态（采集中 / 待采集 / 完成 / 失败）、进度条（已采页数 / 本次计划页数）、新增 / 更新 / 跳过 / 耗时，每行还有「采集」「全量」按钮可以只跑这一个站点。排序是采集中 → 待采集 → 完成 → 失败，本轮没参与的站点沉到底部并标注「未采集」，已禁用的站点显示「已禁用」且采集按钮不可用。失败站点只显示「失败」徽章，不列出错误文本（原始错误仍写入 `collect_jobs` 表，`GET /api/jobs` 可以查），工具栏的「重试失败的 N 个」只重跑这些站点。
 
@@ -332,6 +344,8 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_IMPERSONATE` | `chrome124` | curl_cffi 浏览器指纹 |
 | `FEICMS_DELAY` | 0.3 | 请求间隔（秒） |
 | `FEICMS_RETRIES` | 3 | 重试次数 |
+| `FEICMS_LOCK_FILE` | `data/collect.lock` | 采集锁文件（CLI 全量扫描与服务自动采集互斥） |
+| `FEICMS_LOCK_TTL` | 12 | 锁过期时间（小时），进程崩溃后自动释放 |
 | `FEICMS_AUTO_COLLECT` | true | 后台定时采集 |
 | `FEICMS_COLLECT_INTERVAL` | 60 | 采集间隔（分钟） |
 | `FEICMS_HEALTH_INTERVAL` | 30 | 健康检查间隔（分钟） |
@@ -364,6 +378,9 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh build              # 构建前端
 ./server.sh init               # init-db + seed
 ./server.sh collect --pages 3
+./server.sh full               # 后台全量扫描（每站真实页数），日志 data/collect.log
+./server.sh full-status        # 扫描进度 + 最近日志
+./server.sh full-stop          # 停止后台扫描
 ./server.sh health
 ./server.sh images scan|download|stats|repair|prune
 ./server.sh passwd --user admin --password 你的密码    # 改 .env 里的账号

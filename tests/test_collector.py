@@ -13,10 +13,12 @@ os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
 from sqlalchemy import select  # noqa: E402
 
 from feicms.collector import (  # noqa: E402
+    acquire_collect_lock,
     collect_all,
     collect_progress,
     collect_source,
     merge_duplicates,
+    release_collect_lock,
     start_collect_all,
 )
 from feicms.db import init_db, session  # noqa: E402
@@ -376,6 +378,28 @@ def test_concurrent_sources_merge_same_titles():
             videos = list(await s.scalars(select(Video).where(Video.name.like("并发影片%"))))
         assert len(videos) == 10
         assert all(v.source_count == 2 for v in videos)
+
+    asyncio.run(_run())
+
+
+def test_a_running_sweep_blocks_another_one():
+    """The CLI sweep and the service's auto-collect share one lock file."""
+
+    async def _run() -> None:
+        src = await _make_source("锁测试站", max_pages=5)
+
+        acquire_collect_lock("cli")
+        try:
+            blocked = await collect_all(source_ids=[src.id], client_factory=lambda: StubClient(pagecount=2))
+            assert blocked == []
+        finally:
+            release_collect_lock()
+
+        results = await collect_all(
+            source_ids=[src.id], client_factory=lambda: StubClient(pagecount=2, per_page=10)
+        )
+        assert len(results) == 1
+        assert results[0].inserted == 20
 
     asyncio.run(_run())
 
