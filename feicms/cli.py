@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from .config import BASE_DIR, settings
 from .collector import collect_all, collect_source
 from .db import init_db, session
-from .health import health_check_all
+from .health import health_check_all, health_rank
 from .models import Source, Subscription, Video, SourceItem
 from .seed import load_sources
 from .subscribe import detect_kind, ensure_default_subscriptions, sync_all, sync_subscription
@@ -69,7 +69,11 @@ def list_sources(
             stmt = select(Source)
             if enabled_only:
                 stmt = stmt.where(Source.enabled)
-            sources = list(await s.scalars(stmt.order_by(Source.priority.desc(), Source.id).limit(limit)))
+            sources = list(
+                await s.scalars(
+                    stmt.order_by(health_rank(), Source.priority.desc(), Source.id).limit(limit)
+                )
+            )
         table = Table(title="资源站")
         table.add_column("id", justify="right")
         table.add_column("name")

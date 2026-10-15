@@ -3,8 +3,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 
 from .config import settings
 from .fetcher import Fetcher, build_query, fetch
@@ -22,6 +23,21 @@ class HealthResult:
     status_code: int
     items: int
     message: str = ""
+
+
+def health_rank() -> Any:
+    """SQL sort key used by the source list: healthy first, dead/disabled last.
+
+    ok(0) → slow(1) → unknown(2) → dead(3) → disabled(4), ties broken by priority.
+    """
+    return case(
+        (Source.enabled.is_(False), 4),
+        (Source.health_status == "dead", 3),
+        (Source.health_status == "unknown", 2),
+        (Source.health_status == "slow", 1),
+        (Source.health_status == "ok", 0),
+        else_=2,
+    )
 
 
 async def check_source(source: Source, client: Fetcher | None = None) -> HealthResult:

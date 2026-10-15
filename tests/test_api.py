@@ -79,6 +79,36 @@ def test_duplicate_source_rejected():
     assert client.post("/api/sources", json=payload).status_code == 409
 
 
+def test_source_list_puts_dead_and_disabled_last():
+    _seed()
+
+    async def _mark() -> None:
+        async with session() as s:
+            for name, health, priority, enabled in (
+                ("健康站", "ok", 1, True),
+                ("慢站", "slow", 5, True),
+                ("未知站", "unknown", 5, True),
+                ("死亡站", "dead", 9, True),
+                ("禁用站", "ok", 9, False),
+            ):
+                src = await s.scalar(select(Source).where(Source.name == name))
+                if src is None:
+                    src = Source(name=name, url=f"https://{name}.example.com/api.php/provide/vod/")
+                    s.add(src)
+                src.health_status = health
+                src.priority = priority
+                src.enabled = enabled
+            await s.commit()
+
+    import asyncio
+
+    asyncio.run(_mark())
+
+    names = [s["name"] for s in client.get("/api/sources").json()]
+    mine = [n for n in names if n in {"健康站", "慢站", "未知站", "死亡站", "禁用站"}]
+    assert mine == ["健康站", "慢站", "未知站", "死亡站", "禁用站"]
+
+
 def test_video_search_and_detail():
     _seed()
     search = client.get("/api/videos", params={"q": "测试"}).json()

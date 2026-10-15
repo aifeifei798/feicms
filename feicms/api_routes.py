@@ -32,7 +32,7 @@ from .collector import (
 )
 from .config import settings, update_env_file
 from .db import session
-from .health import health_check_all
+from .health import health_check_all, health_rank
 from .images import (
     download_images,
     download_progress,
@@ -166,7 +166,11 @@ async def list_sources(
             stmt = stmt.where(Source.health_status == health)
         if q:
             stmt = stmt.where(Source.name.like(f"%{q}%"))
-        return list(await s.scalars(stmt.order_by(Source.priority.desc(), Source.id).limit(limit).offset(offset)))
+        return list(
+            await s.scalars(
+                stmt.order_by(health_rank(), Source.priority.desc(), Source.id).limit(limit).offset(offset)
+            )
+        )
 
 
 @router.post("/sources", response_model=SourceOut, status_code=201)
@@ -231,7 +235,7 @@ async def export_sources(
 ) -> Response:
     """Download the current source list (yaml / json / csv)."""
     async with session() as s:
-        stmt = select(Source).order_by(Source.priority.desc(), Source.id)
+        stmt = select(Source).order_by(health_rank(), Source.priority.desc(), Source.id)
         if enabled_only:
             stmt = stmt.where(Source.enabled)
         rows = list(await s.scalars(stmt))
