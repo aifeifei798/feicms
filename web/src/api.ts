@@ -227,6 +227,25 @@ export interface LoginResult {
   message?: string;
 }
 
+export interface ApiKey {
+  id: number;
+  name: string;
+  prefix: string;
+  scopes: string;
+  enabled: boolean;
+  expires_at: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  usage_count: number;
+}
+
+export interface CreatedKey {
+  key: string;
+  id: number;
+  name: string;
+  scopes: string;
+}
+
 export interface Config {
   database_url: string;
   sources_file: string;
@@ -312,4 +331,10 @@ export const api = {
   },
   imagePrune: (deleteFiles = true) => request<{ removed: number; files_deleted: number }>(`/api/images/prune?delete_files=${deleteFiles}`, { method: "POST" }),
   imageRepair: () => request<{ restored: number; requeued: number; files_deleted: number }>("/api/images/repair", { method: "POST" }),
+  apiKeys: () => request<ApiKey[]>("/api/apikeys"),
+  createApiKey: (body: { name: string; scopes?: string; expires_days?: number | null }) =>
+    request<CreatedKey>("/api/apikeys", { method: "POST", body: JSON.stringify(body) }),
+  updateApiKey: (id: number, body: { name?: string; scopes?: string; enabled?: boolean; expires_days?: number | null }) =>
+    request<ApiKey>(`/api/apikeys/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteApiKey: (id: number) => authorizedFetch(`/api/apikeys/${id}`, { method: "DELETE" }),
 };

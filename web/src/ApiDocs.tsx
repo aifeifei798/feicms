@@ -56,6 +56,63 @@ const GROUPS: Group[] = [
         example: "/api/auth/status",
         tryable: false,
       },
+      {
+        method: "GET",
+        path: "/api/apikeys",
+        summary: "列出 API key（只显示前缀，明文不可恢复）",
+        example: "/api/apikeys",
+        tryable: true,
+      },
+      {
+        method: "POST",
+        path: "/api/apikeys",
+        summary: "创建 API key（明文只返回一次）",
+        params: [
+          { name: "name", type: "string", note: "用途名称" },
+          { name: "scopes", type: "string", default: "read", note: "read | write | read,write" },
+          { name: "expires_days", type: "int", note: "留空 = 永久" },
+        ],
+        body: '{"name": "ai", "scopes": "read"}',
+        example: "curl -X POST -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' -d '{\"name\":\"ai\",\"scopes\":\"read\"}' http://127.0.0.1:8000/api/apikeys",
+        tryable: false,
+      },
+      {
+        method: "PATCH",
+        path: "/api/apikeys/{id}",
+        summary: "改名 / 改权限 / 启用停用 / 改有效期",
+        example: "curl -X PATCH -H 'Authorization: Bearer <token>' -d '{\"enabled\":false}' http://127.0.0.1:8000/api/apikeys/1",
+        tryable: false,
+      },
+      {
+        method: "DELETE",
+        path: "/api/apikeys/{id}",
+        summary: "删除（吊销）一个 key",
+        example: "curl -X DELETE -H 'Authorization: Bearer <token>' http://127.0.0.1:8000/api/apikeys/1",
+        tryable: false,
+      },
+    ],
+  },
+  {
+    title: "MCP（给 AI 客户端）",
+    note:
+      "同一个服务有两种传输：HTTP 的 POST /mcp（JSON-RPC），以及本地 stdio（uv run feicms mcp）。" +
+      "用 API key 认证：X-API-Key: fk_... 或 Authorization: Bearer fk_...。只读 key 不能调用采集类工具。",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/mcp",
+        summary: "MCP 服务信息 + 工具列表",
+        example: "curl -H 'X-API-Key: fk_...' http://127.0.0.1:8000/mcp",
+        tryable: true,
+      },
+      {
+        method: "POST",
+        path: "/mcp",
+        summary: "JSON-RPC：initialize / tools/list / tools/call / resources/list",
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_videos","arguments":{"query":"流浪地球"}}}',
+        example: "curl -X POST -H 'X-API-Key: fk_...' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' http://127.0.0.1:8000/mcp",
+        tryable: false,
+      },
     ],
   },
   {

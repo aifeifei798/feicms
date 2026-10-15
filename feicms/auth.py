@@ -1,19 +1,24 @@
-"""Admin authentication for the maintenance API and the DaisyUI panel.
+"""Authentication for the maintenance API, the DaisyUI panel and the MCP server.
 
 Credentials come from .env:
 
-    FEICMS_ADMIN_USER      empty  ->  authentication is disabled
-    FEICMS_ADMIN_PASSWORD  required together with the user to enable it
+    FEICMS_ADMIN_USER      empty  ->  admin login disabled
+    FEICMS_ADMIN_PASSWORD  required together with the user
     FEICMS_SECRET          token signing key (defaults to user+password)
     FEICMS_TOKEN_TTL       token lifetime in seconds (default 24h)
 
-A client authenticates with either
+Two kinds of clients:
 
-    Authorization: Bearer <token>        (token from POST /api/login)
-    Authorization: Basic <user:pass>     (convenient for curl)
-    Cookie: feicms_token=<token>         (set by /api/login, used by the browser UI)
+    admin   Authorization: Bearer <token from /api/login>
+            Authorization: Basic <user:pass>
+            Cookie: feicms_token=<token>          (browser UI)
 
-Tokens are HMAC-SHA256 signed (stdlib only, no extra dependency).
+    api key X-API-Key: fk_...            (or Authorization: Bearer fk_...)
+            keys are managed with `feicms apikey ...` or the panel; only their
+            sha256 is stored, and they carry a scope: read | write
+
+If neither admin credentials nor any API key exists, the API stays open (handy
+for local development).
 """
 
 from __future__ import annotations
@@ -22,16 +27,31 @@ import base64
 import hashlib
 import hmac
 import time
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
+from .apikeys import has_active_keys, lookup_key, parse_scopes
 from .config import settings
 
 TOKEN_COOKIE = "feicms_token"
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@dataclass
+class Principal:
+    """Who is calling us and what they are allowed to do."""
+
+    kind: str  # admin | apikey | anonymous
+    name: str
+    scopes: set[str] = field(default_factory=lambda: {"read", "write"})
+
+    def can_write(self) -> bool:
+        return self.kind != "apikey" or "write" in self.scopes
 
 
 def auth_enabled() -> bool:
-    """Authentication is on only when both user and password are configured."""
+    """Admin login is on only when both user and password are configured."""
     return bool(settings.admin_user and settings.admin_password)
 
 
@@ -69,40 +89,66 @@ def decode_token(token: str) -> str | None:
 
 
 def check_credentials(username: str, password: str) -> bool:
-    return hmac.compare_digest(username, settings.admin_user) and hmac.compare_digest(password, settings.admin_password)
+    return hmac.compare_digest(username, settings.admin_user) and hmac.compare_digest(
+        password, settings.admin_password
+    )
 
 
-def _user_from_header(request: Request) -> str | None:
+async def authenticate(request: Request) -> Principal | None:
+    """Resolve the caller from headers/cookies. Returns None when unauthenticated."""
     header = request.headers.get("authorization", "")
     lowered = header.lower()
-    if lowered.startswith("bearer "):
-        return decode_token(header[7:].strip())
-    if lowered.startswith("basic "):
+
+    api_key = request.headers.get("x-api-key", "").strip()
+    if not api_key and lowered.startswith("bearer "):
+        candidate = header[7:].strip()
+        if candidate.startswith("fk_"):
+            api_key = candidate
+        else:
+            user = decode_token(candidate)
+            if user:
+                return Principal("admin", user)
+
+    if not api_key and lowered.startswith("basic "):
         try:
             raw = base64.b64decode(header[6:].strip()).decode("utf-8")
         except Exception:
-            return None
+            raw = ""
         user, _, password = raw.partition(":")
-        return user if check_credentials(user, password) else None
+        if check_credentials(user, password):
+            return Principal("admin", user)
+
+    if api_key:
+        row = await lookup_key(api_key)
+        if row is not None:
+            return Principal("apikey", row.name, parse_scopes(row))
+        return None
+
+    user = decode_token(request.cookies.get(TOKEN_COOKIE, ""))
+    if user:
+        return Principal("admin", user)
     return None
 
 
-def current_user(request: Request) -> str | None:
-    user = _user_from_header(request)
-    if user:
-        return user
-    return decode_token(request.cookies.get(TOKEN_COOKIE, ""))
-
-
-def require_auth(request: Request) -> str:
-    """FastAPI dependency: returns the authenticated user, or 401 when needed."""
-    if not auth_enabled():
-        return "anonymous"
-    user = current_user(request)
-    if user is None:
+async def require_auth(request: Request) -> Principal:
+    """FastAPI dependency: authenticated principal, or 401/403."""
+    principal = await authenticate(request)
+    if principal is None:
+        if not auth_enabled() and not await has_active_keys():
+            return Principal("anonymous", "anonymous")
         raise HTTPException(
             status_code=401,
-            detail="未授权：需要登录（POST /api/login，或 Authorization: Basic/Bearer）",
+            detail="未授权：需要登录（POST /api/login）或 API key（X-API-Key: fk_...）",
             headers={"WWW-Authenticate": "Basic"},
         )
-    return user
+    if request.method in WRITE_METHODS and not principal.can_write():
+        raise HTTPException(403, f"API key '{principal.name}' 只有 read 权限，不能执行 {request.method}")
+    return principal
+
+
+async def require_admin(request: Request) -> Principal:
+    """Dependency for endpoints that manage keys/credentials themselves."""
+    principal = await require_auth(request)
+    if principal.kind != "admin":
+        raise HTTPException(403, "只有管理员账号（FEICMS_ADMIN_USER）可以管理 API key")
+    return principal

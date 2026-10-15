@@ -7,14 +7,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
-from .auth import TOKEN_COOKIE, auth_enabled, check_credentials, current_user, make_token, require_auth
+from .apikeys import create_api_key, delete_api_key, list_api_keys, update_api_key
+from .auth import (
+    TOKEN_COOKIE,
+    auth_enabled,
+    authenticate,
+    check_credentials,
+    make_token,
+    require_admin,
+    require_auth,
+)
 from .collector import collect_all, collect_source
 from .config import settings
 from .db import session
 from .health import health_check_all
 from .images import download_images, image_stats, normalize_image_url, prune_images, repair_images, scan_images
-from .models import CollectJob, Image, Source, SourceItem, Subscription, Video
+from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video
 from .schemas import (
+    ApiKeyCreate,
+    ApiKeyOut,
+    ApiKeyUpdate,
     CollectRequest,
     EnableRequest,
     HealthReport,
@@ -35,14 +47,21 @@ from .subscribe import detect_kind, ensure_default_subscriptions, sync_all, sync
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 auth_router = APIRouter(prefix="/api")  # login/status stay reachable without a token
+keys_router = APIRouter(prefix="/api", dependencies=[Depends(require_admin)])  # only the admin account
 
 
 # --------------------------------------------------------------------------- auth
 @auth_router.get("/auth/status")
 async def auth_status(request: Request) -> dict[str, Any]:
     """Whether authentication is enabled and whether this request is authenticated."""
-    user = current_user(request)
-    return {"auth_required": auth_enabled(), "authenticated": user is not None, "user": user}
+    principal = await authenticate(request)
+    return {
+        "auth_required": auth_enabled(),
+        "authenticated": principal is not None,
+        "user": principal.name if principal else None,
+        "kind": principal.kind if principal else None,
+        "scopes": sorted(principal.scopes) if principal else [],
+    }
 
 
 @auth_router.post("/login")
@@ -61,6 +80,48 @@ async def login(body: LoginRequest, response: Response) -> dict[str, Any]:
 async def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(TOKEN_COOKIE)
     return {"ok": True}
+
+
+# -------------------------------------------------------------------------- api keys
+@keys_router.get("/apikeys", response_model=list[ApiKeyOut])
+async def list_keys(include_disabled: bool = True) -> list[ApiKey]:
+    """List API keys. The plaintext key is never stored or returned again."""
+    return await list_api_keys(include_disabled=include_disabled)
+
+
+@keys_router.post("/apikeys", status_code=201)
+async def create_key(payload: ApiKeyCreate) -> dict[str, Any]:
+    """Create an API key. The plaintext is returned once — store it yourself."""
+    try:
+        row, plaintext = await create_api_key(
+            name=payload.name, scopes=payload.scopes, expires_days=payload.expires_days
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"key": plaintext, "id": row.id, "name": row.name, "scopes": row.scopes}
+
+
+@keys_router.patch("/apikeys/{key_id}", response_model=ApiKeyOut)
+async def update_key(key_id: int, payload: ApiKeyUpdate) -> ApiKey:
+    try:
+        row = await update_api_key(
+            key_id,
+            name=payload.name,
+            scopes=payload.scopes,
+            enabled=payload.enabled,
+            expires_days=payload.expires_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "api key not found")
+    return row
+
+
+@keys_router.delete("/apikeys/{key_id}", status_code=204)
+async def delete_key(key_id: int) -> None:
+    if not await delete_api_key(key_id):
+        raise HTTPException(404, "api key not found")
 
 
 # --------------------------------------------------------------------------- sources

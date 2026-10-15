@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from feicms.api import app
 from feicms.config import settings
+from feicms.db import init_db
+
+asyncio.run(init_db())
 
 
 def _enable_auth() -> None:
@@ -25,6 +30,8 @@ def test_auth_disabled_by_default():
         "auth_required": False,
         "authenticated": False,
         "user": None,
+        "kind": None,
+        "scopes": [],
     }
     assert client.get("/api/stats").status_code == 200
 

@@ -184,6 +184,35 @@ class Subscription(Base):
         return f"<Subscription {self.id} {self.url}>"
 
 
+class ApiKey(Base):
+    """A long-lived key for programmatic / AI access to the API.
+
+    Only the sha256 of the key is stored; the plaintext is shown once when the
+    key is created. Scopes: `read` (query only) and `write` (mutating endpoints).
+    """
+
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        UniqueConstraint("key_hash", name="uq_api_key_hash"),
+        Index("ix_api_key_enabled", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), default="key")
+    key_hash: Mapped[str] = mapped_column(String(64), index=True)
+    prefix: Mapped[str] = mapped_column(String(12), default="")  # first chars, for display
+    scopes: Mapped[str] = mapped_column(String(60), default="read")  # comma separated
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    usage_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging helper
+        return f"<ApiKey {self.id} {self.name} {self.prefix}… {self.scopes}>"
+
+
 class Setting(Base):
     """Small key/value store for runtime maintenance flags."""
 

@@ -157,6 +157,11 @@ feicms images layout [--top 12]    # 打印分桶结构
 feicms passwd [--user admin --password xxx]   # 写入 .env 的管理员账号（留空则随机生成）
 feicms token [--ttl 3600]          # 打印一个 API token（curl 用）
 
+feicms apikey create --name ai --scopes read [--expires-days 30]
+feicms apikey list / update <id> / revoke <id>   # API key 管理
+feicms mcp                         # 以 stdio 方式跑 MCP server（给 AI 客户端）
+feicms mcp-config [--url http://localhost:8000/mcp]
+
 feicms serve [--host --port]
 ```
 
@@ -200,6 +205,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET | `/api/auth/status` | 认证是否开启、当前请求是否已登录 |
 | POST | `/api/login` | `{username, password}` → token（同时设置 cookie） |
 | POST | `/api/logout` | 清除登录 cookie |
+| GET / POST / PATCH / DELETE | `/api/apikeys[/{id}]` | API key 管理（仅管理员账号） |
 | GET | `/api/sources` | 站点列表（`?enabled=&health=&q=`） |
 | POST | `/api/sources` | 新增站点 |
 | GET / PATCH / DELETE | `/api/sources/{id}` | 查看 / 修改 / 删除 |
@@ -226,6 +232,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET | `/images/{id}` | 返回本地图片文件，未下载则 302 到原 URL |
 | POST | `/api/prune` | 清理无播放源记录 / 孤儿影片 |
 | GET | `/provide/vod` | 兼容资源站格式，可被下游 CMS 直接采集 |
+| GET / POST | `/mcp` | MCP server（JSON-RPC：`initialize` / `tools/list` / `tools/call`） |
 | GET | `/docs` · `/openapi.json` | OpenAPI 文档 |
 
 ---
@@ -331,7 +338,85 @@ uv run feicms passwd --user admin                       # 留空则随机生成
 
 ---
 
-## 11. 测试
+## 11. API Key 与 MCP（给 AI 客户端使用）
+
+管理员账号适合“人”登录；脚本和 AI 客户端更适合用 **API key**：长期有效、可分权限、可单独吊销。
+
+```bash
+uv run feicms apikey create --name ai --scopes read          # 只读 key
+uv run feicms apikey create --name automation --scopes write # 可采集 / 改源
+uv run feicms apikey list
+uv run feicms apikey revoke 3
+uv run feicms apikey update 3 --enabled --scopes read
+```
+
+数据库里只存 **sha256 哈希**，明文只在创建时打印一次，丢了只能重新创建。面板的「设置」页也能创建/停用/删除。
+
+使用：
+
+```bash
+curl -s http://localhost:8000/api/stats -H "X-API-Key: fk_..."
+curl -s http://localhost:8000/api/videos?q=流浪地球 -H "Authorization: Bearer fk_..."
+```
+
+权限模型：
+
+| scope | 能做什么 |
+| --- | --- |
+| `read` | 查询：sources / videos / stats / categories / images |
+| `write` | 以上全部 + 采集、健康检查、增删改资源站、下载海报、管理 key |
+
+`POST/PUT/PATCH/DELETE` 对只读 key 返回 `403`；只有管理员账号（`FEICMS_ADMIN_USER`）可以管理 key。
+
+### MCP server
+
+同一个服务提供两种 MCP 传输，工具集相同：
+
+```bash
+# 1) HTTP（streamable）：任何支持远程 MCP 的客户端
+curl -s -X POST http://localhost:8000/mcp \
+  -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# 2) stdio：Claude Desktop / OpenCode 之类
+uv run feicms mcp
+uv run feicms mcp-config            # 打印可粘贴的客户端配置
+```
+
+客户端配置示例：
+
+```json
+{
+  "mcpServers": {
+    "feicms": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": { "X-API-Key": "fk_..." }
+    }
+  }
+}
+```
+
+暴露的工具：
+
+| 工具 | 权限 | 说明 |
+| --- | --- | --- |
+| `search_videos` | read | 跨站点合并后的搜索，返回本地海报路径 |
+| `get_video` | read | 视频详情 + 所有播放源 |
+| `list_categories` | read | 分类及数量 |
+| `list_sources` | read | 资源站列表与健康状态 |
+| `get_stats` | read | 总览统计 |
+| `provide_feed` | read | 资源站兼容格式（`ac=list`）输出 |
+| `check_health` | write | 探测所有站点并更新健康状态 |
+| `collect_sources` | write | 采集（`pages=0` 全量） |
+| `image_stats` | read | 海报库统计 |
+| `download_images` | write | 下载一批海报 |
+
+stdio 模式直接读同一个 `.env` 和数据库，属于本地可信进程；远程访问请用 HTTP 端点 + API key。
+
+---
+
+## 12. 测试
 
 ```bash
 uv sync --extra dev
@@ -342,7 +427,7 @@ uv run pytest -q
 
 ---
 
-## 12. Docker
+## 13. Docker
 
 ```bash
 docker build -t feicms .

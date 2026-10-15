@@ -10,10 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api_routes import auth_router, provide_router, router
+from .api_routes import auth_router, keys_router, provide_router, router
 from .auth import auth_enabled, require_auth
 from .config import BASE_DIR, settings
 from .db import dispose, init_db, session
+from .mcp import mcp_router
 from .models import Image
 from .scheduler import auto_collect_loop, auto_health_loop, auto_image_loop, auto_subscribe_loop
 from .subscribe import ensure_default_subscriptions
@@ -64,8 +65,10 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(keys_router)
 app.include_router(router)
 app.include_router(provide_router)
+app.include_router(mcp_router)
 
 
 @app.get("/health")

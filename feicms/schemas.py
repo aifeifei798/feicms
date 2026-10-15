@@ -186,3 +186,30 @@ class SubscriptionOut(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field(default="key", min_length=1, max_length=120)
+    scopes: str = Field(default="read", description="read | write | read,write")
+    expires_days: Optional[int] = None
+
+
+class ApiKeyUpdate(BaseModel):
+    name: Optional[str] = None
+    scopes: Optional[str] = None
+    enabled: Optional[bool] = None
+    expires_days: Optional[int] = None
+
+
+class ApiKeyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    prefix: str
+    scopes: str
+    enabled: bool
+    expires_at: Optional[datetime]
+    created_at: datetime
+    last_used_at: Optional[datetime]
+    usage_count: int

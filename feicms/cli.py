@@ -486,5 +486,114 @@ def serve(host: str = typer.Option(settings.host, "--host"), port: int = typer.O
     uvicorn.run("feicms.api:app", host=host, port=port)
 
 
+# -------------------------------------------------------------------------- api keys
+apikey_app = typer.Typer(help="管理 API key（给脚本 / AI 客户端使用的长期访问密钥）")
+app.add_typer(apikey_app, name="apikey")
+
+
+@apikey_app.command("create")
+def apikey_create(
+    name: str = typer.Option("key", "--name", help="key 名称，方便识别用途"),
+    scopes: str = typer.Option("read", "--scopes", help="read | write | read,write"),
+    expires_days: int = typer.Option(None, "--expires-days", help="有效期天数（留空则永久）"),
+) -> None:
+    """Create an API key. The plaintext is printed once and never stored."""
+    from .apikeys import create_api_key
+
+    async def run() -> None:
+        row, plaintext = await create_api_key(name=name, scopes=scopes, expires_days=expires_days)
+        console.print(f"[green]created[/green] {plaintext}")
+        console.print(f"  id={row.id}  name={row.name}  scopes={row.scopes}  expires={row.expires_at}")
+        console.print("[dim]把它保存在安全的地方；数据库里只存 sha256 哈希，无法找回。[/dim]")
+
+    asyncio.run(run())
+
+
+@apikey_app.command("list")
+def apikey_list() -> None:
+    """List API keys (hashes are never shown)."""
+    from .apikeys import list_api_keys
+
+    async def run() -> None:
+        rows = await list_api_keys()
+        if not rows:
+            console.print("[dim]没有 API key。用 `feicms apikey create --name ai --scopes read` 创建。[/dim]")
+            return
+        table = Table(title="API keys")
+        table.add_column("id")
+        table.add_column("name")
+        table.add_column("key")
+        table.add_column("scopes")
+        table.add_column("enabled")
+        table.add_column("uses")
+        table.add_column("expires")
+        for row in rows:
+            table.add_row(
+                str(row.id),
+                row.name,
+                f"{row.prefix}…",
+                row.scopes,
+                "yes" if row.enabled else "no",
+                str(row.usage_count),
+                row.expires_at.strftime("%Y-%m-%d") if row.expires_at else "never",
+            )
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@apikey_app.command("revoke")
+def apikey_revoke(key_id: int) -> None:
+    """Delete an API key by id."""
+    from .apikeys import delete_api_key
+
+    async def run() -> None:
+        if await delete_api_key(key_id):
+            console.print(f"[green]deleted[/green] key {key_id}")
+        else:
+            console.print(f"[yellow]key {key_id} not found[/yellow]")
+
+    asyncio.run(run())
+
+
+@apikey_app.command("update")
+def apikey_update(
+    key_id: int,
+    name: str = typer.Option(None, "--name"),
+    scopes: str = typer.Option(None, "--scopes", help="read | write | read,write"),
+    enabled: bool = typer.Option(None, "--enabled/--disabled"),
+    expires_days: int = typer.Option(None, "--expires-days"),
+) -> None:
+    """Change a key's name, scopes or enabled state."""
+    from .apikeys import update_api_key
+
+    async def run() -> None:
+        row = await update_api_key(key_id, name=name, scopes=scopes, enabled=enabled, expires_days=expires_days)
+        if row is None:
+            console.print(f"[yellow]key {key_id} not found[/yellow]")
+            return
+        console.print(f"[green]updated[/green] id={row.id} name={row.name} scopes={row.scopes} enabled={row.enabled}")
+
+    asyncio.run(run())
+
+
+@app.command("mcp")
+def mcp_stdio() -> None:
+    """Run the MCP server over stdio (for Claude Desktop / OpenCode / MCP clients)."""
+    from .mcp import serve_stdio
+
+    serve_stdio()
+
+
+@app.command("mcp-config")
+def mcp_config(
+    url: str = typer.Option(None, "--url", help="HTTP MCP endpoint, e.g. http://127.0.0.1:8000/mcp"),
+) -> None:
+    """Print a ready-to-paste MCP client configuration."""
+    from .mcp import mcp_config_json
+
+    console.print(mcp_config_json(url))
+
+
 if __name__ == "__main__":
     app()
