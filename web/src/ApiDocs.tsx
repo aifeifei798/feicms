@@ -206,7 +206,7 @@ const GROUPS: Group[] = [
       {
         method: "POST",
         path: "/api/collect",
-        summary: "批量采集（同步等待，返回每源统计）。若后台采集正在运行则返回 409",
+        summary: "批量采集（同步等待，返回每源统计；站点多时会很久，浏览器可能超时，面板用的是 /api/collect/start）。若后台采集正在运行则返回 409",
         body: `{ "names": ["如意资源站", "白嫖资源站"], "pages": 3, "all": false }`,
         example: "curl -X POST http://127.0.0.1:8000/api/collect -H 'Content-Type: application/json' -d '{\"pages\":2}'",
       },

@@ -280,6 +280,9 @@ export function authorizedFetch(url: string, init?: RequestInit): Promise<Respon
     ...init,
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
+  }).catch((e: Error) => {
+    // Browser-level failure: the request never reached the API.
+    throw new Error(`无法连接服务（${e.message}）。请确认服务正在运行、地址正确，或刷新页面重试。`);
   });
 }
 
@@ -409,8 +412,6 @@ export const api = {
       `/api/sources/${id}/collect${pages === undefined ? "" : `?pages=${pages}`}`,
       { method: "POST" }
     ),
-  collectAll: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
-    request<CollectResult[]>("/api/collect", { method: "POST", body: JSON.stringify(body) }),
   collectStart: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
     request<CollectProgress>("/api/collect/start", { method: "POST", body: JSON.stringify(body) }),
   collectProgress: () => request<CollectProgress>("/api/collect/progress"),

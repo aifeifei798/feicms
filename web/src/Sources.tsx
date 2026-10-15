@@ -1,5 +1,13 @@
 import React from "react";
-import { api, downloadFile, type Source, type SourceImportResult, type Subscription, type SyncResult } from "./api";
+import {
+  api,
+  downloadFile,
+  type CollectProgress,
+  type Source,
+  type SourceImportResult,
+  type Subscription,
+  type SyncResult,
+} from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -19,6 +27,11 @@ export default function Sources({ notify }: { notify: Notify }) {
   const [editing, setEditing] = React.useState<Source | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [progress, setProgress] = React.useState<CollectProgress | null>(null);
+
+  React.useEffect(() => {
+    api.collectProgress().then(setProgress).catch(() => undefined);
+  }, []);
 
   const load = React.useCallback(async () => {
     const params: Record<string, string | boolean> = {};
@@ -57,13 +70,23 @@ export default function Sources({ notify }: { notify: Notify }) {
   const collectAllSources = async () => {
     setBusy(true);
     try {
-      const results = await api.collectAll({ pages: pages === "" ? undefined : Number(pages) });
-      const added = results.reduce((a, b) => a + b.inserted, 0);
-      const updated = results.reduce((a, b) => a + b.updated, 0);
-      const failed = results.filter((r) => r.error).length;
+      // The sweep runs in the background: a single blocking request for 50+
+      // sites would run for minutes and the browser would give up ("Failed to fetch").
+      let state = await api.collectStart({ pages: pages === "" ? undefined : Number(pages) });
+      setProgress(state);
+      if (state.error) {
+        notify(`采集失败：${state.error}`, "error");
+        return;
+      }
+      notify(`采集已启动：${state.total_sources} 个站点，后台进行中`);
+      while (state.running) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        state = await api.collectProgress();
+        setProgress(state);
+      }
       notify(
-        `采集 ${results.length} 个站点：新增 ${added} · 更新 ${updated}${failed ? ` · ${failed} 个失败` : ""}`,
-        failed ? "error" : "success"
+        `采集完成：${state.done_sources}/${state.total_sources} 个站点 · 新增 ${state.inserted} · 更新 ${state.updated}${state.failed_sources ? ` · ${state.failed_sources} 个失败` : ""}`,
+        state.failed_sources ? "error" : "success"
       );
     } catch (e) {
       notify((e as Error).message, "error");
@@ -110,11 +133,17 @@ export default function Sources({ notify }: { notify: Notify }) {
           <option value="50">50 页</option>
           <option value="0">全量（遍历所有页）</option>
         </select>
-        <button className="btn btn-sm btn-outline" onClick={collectAllSources} disabled={busy}>
-          采集全部
+        <button className="btn btn-sm btn-outline" onClick={collectAllSources} disabled={busy || progress?.running}>
+          {busy || progress?.running ? "采集中…" : "采集全部"}
         </button>
         <span className="muted">{sources.length} 个站点</span>
-        {busy && <span className="muted">采集中…</span>}
+        {progress && (
+          <span className="muted">
+            {progress.running ? "进度" : "上次采集"} {progress.done_sources}/{progress.total_sources} · 新增
+            {progress.inserted} · 更新 {progress.updated}
+            {progress.failed_sources ? ` · ${progress.failed_sources} 失败` : ""}
+          </span>
+        )}
       </div>
 
       <div className="card bg-base-100 border border-base-300">
