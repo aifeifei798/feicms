@@ -190,3 +190,98 @@ def test_merge_duplicates_endpoint():
             assert len(items) == 2
 
     asyncio.run(_check())
+
+
+def test_bulk_import_and_export_sources():
+    res = client.post(
+        "/api/sources/import",
+        json={
+            "text": (
+                "导入站|https://import.example.com/api.php/provide/vod/|xml|98\n"
+                "https://bare.example.com/vod/\n"
+                "# 注释行会被忽略\n"
+            )
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["parsed"] == 2 and body["created"] == 2
+
+    # Re-importing the same URL updates the existing row instead of duplicating it.
+    again = client.post(
+        "/api/sources/import",
+        json={"text": "导入站改名|https://import.example.com/api.php/provide/vod/|json"},
+    ).json()
+    assert again["created"] == 0 and again["updated"] == 1
+
+    yaml_text = client.get("/api/sources/export?fmt=yaml").text
+    assert "import.example.com" in yaml_text
+    csv_text = client.get("/api/sources/export?fmt=csv").text
+    assert csv_text.startswith("name,url,api_format,enabled,priority,max_pages,tags,uptime")
+    assert "导入站改名" in csv_text
+    assert client.get("/api/sources/export?fmt=bad").status_code == 422
+
+
+def test_export_videos_endpoint():
+    _seed()
+    res = client.get("/api/export?fmt=jsonl&limit=50")
+    assert res.status_code == 200
+    assert "attachment" in res.headers["content-disposition"]
+
+    records = [json.loads(line) for line in res.text.strip().splitlines()]
+    record = next(r for r in records if r["name"] == "测试影片")
+    assert record["sources"] and record["sources"][0]["plays"]
+
+    assert isinstance(client.get("/api/export?fmt=json").json(), list)
+    assert client.get("/api/export?q=不存在的影片").text.strip() == ""
+
+
+def test_scheduler_status_and_runtime_update():
+    state = client.get("/api/scheduler").json()
+    assert "auto_collect" in state and "collect_running" in state
+
+    updated = client.post(
+        "/api/scheduler",
+        json={"collect_interval_minutes": 15, "auto_images": False},
+    ).json()
+    assert updated["collect_interval_minutes"] == 15
+    assert updated["auto_images"] is False
+    assert client.post("/api/scheduler", json={"collect_interval_minutes": 0}).status_code == 422
+
+
+def test_admin_endpoints_require_admin_account():
+    assert client.post("/api/admin/password", json={"password": "x"}).status_code == 403
+    assert client.post("/api/admin/token").status_code == 403
+
+
+def test_admin_password_and_token_endpoints():
+    from feicms.config import settings
+
+    settings.admin_user, settings.admin_password = "admin", "temporary-secret"
+    env_path = os.path.join(tempfile.mkdtemp(), ".env")
+    os.environ["FEICMS_ENV_FILE"] = env_path
+    try:
+        token = client.post("/api/login", json={"username": "admin", "password": "temporary-secret"}).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        res = client.post("/api/admin/password", json={"username": "admin", "password": "new-strong-pass"}, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["user"] == "admin"
+        written = open(env_path, encoding="utf-8").read()
+        assert "FEICMS_ADMIN_USER=admin" in written
+        assert "FEICMS_ADMIN_PASSWORD=new-strong-pass" in written
+
+        generated = client.post("/api/admin/password", json={}, headers=headers).json()
+        assert generated["password"]
+
+        tok = client.post("/api/admin/token", params={"ttl": 600}, headers=headers).json()
+        assert tok["token"].startswith("admin|")
+        assert tok["expires_in"] == 600
+    finally:
+        settings.admin_user, settings.admin_password = "", ""
+        os.environ.pop("FEICMS_ENV_FILE", None)
+
+
+def test_images_layout_endpoint():
+    layout = client.get("/api/images/layout?top=5").json()
+    assert "buckets" in layout and "files" in layout and "top" in layout

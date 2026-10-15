@@ -349,6 +349,104 @@ curl -s -X POST ${origin}/mcp \\
           </p>
         </div>
       </div>
+      {/* ------------------------------------------------ 工具试跑 */}
+      <McpPlayground tools={tools} notify={notify} />
     </section>
+  );
+}
+
+function McpPlayground({ tools, notify }: { tools: McpTool[]; notify: Notify }) {
+  const presets: Record<string, string> = {
+    search: '{"query": "流浪地球", "limit": 5}',
+    get_document: '{"video_id": 1, "max_episodes": 20}',
+    get_plays: '{"video_id": 1}',
+    browse: '{"type": "国产动漫", "limit": 10}',
+    related: '{"video_id": 1, "limit": 5}',
+    read_chunks: '{"limit": 20, "offset": 0}',
+    list_types: "{}",
+    get_stats: "{}",
+  };
+
+  const [tool, setTool] = React.useState("search");
+  const [args, setArgs] = React.useState(presets.search);
+  const [output, setOutput] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const pick = (name: string) => {
+    setTool(name);
+    setArgs(presets[name] ?? "{}");
+  };
+
+  const run = async () => {
+    let parsed: Record<string, unknown> = {};
+    if (args.trim()) {
+      try {
+        parsed = JSON.parse(args) as Record<string, unknown>;
+      } catch (e) {
+        notify(`参数不是合法 JSON：${(e as Error).message}`, "error");
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      const res = await api.mcpCall(tool, parsed);
+      if (res.error) {
+        setOutput(res.error.message);
+        return;
+      }
+      if (res.result?.isError) {
+        setOutput((res.result.content ?? []).map((c) => c.text).join("\n"));
+        return;
+      }
+      setOutput(
+        res.result?.structuredContent !== undefined
+          ? JSON.stringify(res.result.structuredContent, null, 2)
+          : (res.result?.content ?? []).map((c) => c.text).join("\n")
+      );
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card bg-base-100 border border-base-300 mt-1.5">
+      <div className="card-body">
+        <h2 className="card-title">工具试跑</h2>
+        <p className="muted">
+          直接调用 <span className="mono">POST /mcp</span>（用当前登录身份），结果和 AI 客户端看到的完全一致，
+          包括播放源 URL。
+        </p>
+        <div className="flex flex-wrap gap-1 mt-2">
+          {(tools.length ? tools.map((t) => t.name) : Object.keys(presets)).map((name) => (
+            <button
+              key={name}
+              className={`btn btn-sm ${tool === name ? "btn-primary" : "btn-outline"}`}
+              onClick={() => pick(name)}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+        <textarea
+          className="textarea input-bordered mono mt-2"
+          rows={4}
+          value={args}
+          onChange={(e) => setArgs(e.target.value)}
+        ></textarea>
+        <div className="flex gap-2 mt-1">
+          <button className="btn btn-sm btn-primary" onClick={run} disabled={busy}>
+            {busy ? "运行中…" : "运行"}
+          </button>
+          {output && (
+            <button className="btn btn-sm btn-outline" onClick={() => copy(output, notify)}>
+              复制结果
+            </button>
+          )}
+        </div>
+        {output && <pre className="mono bg-base-200 rounded-box p-3 mt-2 whitespace-pre-wrap">{output}</pre>}
+      </div>
+    </div>
   );
 }

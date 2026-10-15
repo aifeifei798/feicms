@@ -97,3 +97,30 @@ class Settings:
 
 
 settings = Settings()
+
+
+def env_file_path() -> Path:
+    """Where the .env lives. Override with FEICMS_ENV_FILE for unusual layouts."""
+    raw = os.environ.get("FEICMS_ENV_FILE")
+    return Path(raw) if raw else BASE_DIR / ".env"
+
+
+def update_env_file(values: dict[str, str], path: Path | None = None) -> Path:
+    """Write (or replace) KEY=VALUE lines in .env, leaving everything else alone."""
+    p = path or env_file_path()
+    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+    wanted = dict(values)
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        key = line.split("=", 1)[0].strip()
+        if key in wanted:
+            out.append(f"{key}={wanted[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+    for key, value in wanted.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+    p.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return p

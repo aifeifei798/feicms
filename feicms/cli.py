@@ -475,30 +475,19 @@ def images_layout(top: int = typer.Option(12, "--top", help="列出文件最多�
 def set_admin(
     user: str = typer.Option("admin", "--user", help="管理员用户名"),
     password: str = typer.Option(None, "--password", help="管理员密码（留空则随机生成）"),
-    env_file: str = typer.Option(str(BASE_DIR / ".env"), "--env-file", help="要写入的 .env 文件"),
+    env_file: str = typer.Option(None, "--env-file", help="要写入的 .env 文件（默认项目根目录的 .env）"),
 ) -> None:
     """Write FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD into .env and enable login."""
     from .auth import auth_enabled
+    from .config import update_env_file
 
     if password is None:
         password = secrets.token_urlsafe(12)
 
-    path = Path(env_file)
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    wanted = {"FEICMS_ADMIN_USER": user, "FEICMS_ADMIN_PASSWORD": password}
-    out: list[str] = []
-    seen: set[str] = set()
-    for line in lines:
-        key = line.split("=", 1)[0].strip()
-        if key in wanted:
-            out.append(f"{key}={wanted[key]}")
-            seen.add(key)
-        else:
-            out.append(line)
-    for key, value in wanted.items():
-        if key not in seen:
-            out.append(f"{key}={value}")
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    path = update_env_file(
+        {"FEICMS_ADMIN_USER": user, "FEICMS_ADMIN_PASSWORD": password},
+        Path(env_file) if env_file else None,
+    )
 
     console.print(f"[green]写入[/green] {path}")
     console.print(f"  FEICMS_ADMIN_USER={user}")

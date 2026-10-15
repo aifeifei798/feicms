@@ -29,7 +29,7 @@
 | 源订阅 | 注册「资源站列表 feed」（JSON 或 TXT），定时同步，站点列表自动增删 |
 | 海报本地化 | `vod_pic` 图片下载到本地，按内容 hash 分桶存储，见 [第 6 节](#6-海报图片本地化目录分桶策略) |
 | 对外提供 | `GET /provide/vod` 输出标准资源站格式，下游 CMS 可以直接采集 |
-| 管理面板 | React + Vite + Tailwind + DaisyUI：站点 CRUD、采集、健康、影片搜索、图片库、任务历史、配置 |
+| 管理面板 | React + Vite + Tailwind + DaisyUI：站点 CRUD、批量导入/导出站点、采集、健康、影片搜索、图片库、任务历史、自动任务开关、备份导出、管理员账号、API key、MCP 工具试跑、配置 |
 
 技术栈：Python 3.10+ / FastAPI / SQLAlchemy 2.0 (async) / `curl_cffi`（浏览器 TLS 指纹） / `lxml` / typer + rich；前端 React 18 + Vite 5 + Tailwind 4 + DaisyUI 5。
 
@@ -116,6 +116,15 @@ uv run feicms subscribe --sync
 
 `FEICMS_SUBSCRIPTIONS` 里配置的 feed（逗号分隔）会在启动后按 `FEICMS_SUBSCRIBE_INTERVAL` 分钟自动同步；面板的「源订阅」卡片也能做同样的事。feed 格式支持 JSON（`[{name, url, ...}]`）和 TXT（每行 `名称|url|格式|uptime`）。
 
+**d) 管理面板批量导入 / 导出**
+
+「资源站 → 站点列表 → 批量导入」粘贴一份列表（每行 `名称|url|格式|可用率`，只写 URL 也行，`#` 注释会被忽略，YAML/JSON 也接受），已存在的 URL 会更新而不是重复添加；同一卡片可以导出当前列表为 YAML / JSON / CSV，导出结果可以直接喂回 `feicms seed` 或另一台实例。对应接口：
+
+```bash
+POST /api/sources/import        # {"text": "...", "max_pages": 10, "enabled": true}
+GET  /api/sources/export?fmt=yaml|json|csv
+```
+
 ---
 
 ## 4. 采集与页数语义
@@ -181,6 +190,27 @@ feicms mcp-config [--url http://localhost:8000/mcp]
 feicms serve [--host --port]
 ```
 
+### 面板覆盖：CLI 能做的事，后台页面都有
+
+| CLI | 面板位置 | 接口 |
+|---|---|---|
+| `seed` / `add` | 资源站 → 站点列表 → 批量导入 / 新增站点 | `POST /api/sources`, `POST /api/sources/import` |
+| `sources` / 启用禁用 | 资源站列表（筛选、开关、编辑、删除） | `GET /api/sources`, `PATCH /api/sources/{id}` |
+| — | 站点列表 → 导出 YAML / JSON / CSV | `GET /api/sources/export?fmt=` |
+| `collect` / `health` | 资源站 → 采集全部（实时进度）、健康检查 | `POST /api/collect/start`, `POST /api/health-check` |
+| `subscribe` | 资源站 → 源订阅 | `GET/POST/DELETE /api/subscriptions` |
+| `stats` | 首页总览 | `GET /api/stats` |
+| `prune` / `repair-plays` / `merge-duplicates` | 配置 → 数据维护 | `POST /api/prune` 等 |
+| `export` | 配置 → 备份与导出 | `GET /api/export?fmt=jsonl\|json` |
+| `images scan/download/stats/prune/repair/layout` | 图片库（扫描、下载一批、进度、列表、分桶结构） | `POST /api/images/scan` 等，`GET /api/images/layout` |
+| `apikey` | AI / MCP 接入 → 密钥管理 | `GET/POST/DELETE /api/apikeys` |
+| `mcp` | AI / MCP 接入 → 工具试跑（用当前登录身份直接调 `POST /mcp`） | `POST /mcp` |
+| `passwd` | 配置 → 管理员账号（随机生成 / 写入 `.env`） | `POST /api/admin/password` |
+| `token` | 配置 → 管理员账号 → 生成 curl 用的 token | `POST /api/admin/token` |
+| `serve` | `./server.sh start/restart/status` | — |
+
+自动任务（自动采集、自动海报）在「配置 → 自动任务」里开关和改间隔，**改完立即生效，不需要重启服务**：`GET /api/scheduler` 读状态，`POST /api/scheduler` 改开关/间隔。
+
 ---
 
 ## 6. 海报图片本地化（目录分桶策略）
@@ -225,6 +255,8 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET | `/api/mcp/tools` | MCP 工具清单（含每个工具需要的 scope） |
 | GET | `/api/sources` | 站点列表（`?enabled=&health=&q=`） |
 | POST | `/api/sources` | 新增站点 |
+| POST | `/api/sources/import` | 批量导入站点列表（`{text, max_pages, enabled}`），已存在的 URL 更新而非重复添加 |
+| GET | `/api/sources/export` | 导出站点列表 `?fmt=yaml\|json\|csv`（`?enabled_only=true` 只导出启用的） |
 | GET / PATCH / DELETE | `/api/sources/{id}` | 查看 / 修改 / 删除 |
 | POST | `/api/sources/{id}/enable` | 启用或禁用 |
 | POST | `/api/sources/{id}/collect` | 立即采集该站点（`?pages=0` 全量） |
@@ -249,10 +281,16 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET | `/api/images/{id}` | 单条图片记录 |
 | POST | `/api/images/prune` | 删除无引用图片 |
 | POST | `/api/images/repair` | 校对索引与磁盘 |
+| GET | `/api/images/layout` | 海报目录分桶结构（文件数、已用桶、最忙桶） |
 | GET | `/images/{id}` | 返回本地图片文件，未下载则 302 到原 URL |
 | POST | `/api/prune` | 清理无播放源记录 / 孤儿影片 |
 | POST | `/api/repair-plays` | 用当前解析规则重建播放源结构（不联网） |
 | POST | `/api/merge-duplicates` | 合并同标题的重复影片（`?dry_run=true` 只统计） |
+| GET | `/api/export` | 导出合并后的影片库 `?fmt=jsonl\|json&limit=&q=`（文件下载） |
+| GET | `/api/scheduler` | 自动任务状态：开关、间隔、上次运行时间、当前采集进度 |
+| POST | `/api/scheduler` | 运行时开关自动采集 / 自动海报，改间隔（无需重启） |
+| POST | `/api/admin/password` | 写入管理员账号到 `.env`（密码留空则随机生成，仅管理员） |
+| POST | `/api/admin/token` | 生成签名 token（`?ttl=3600`，仅管理员） |
 | GET | `/provide/vod` | 兼容资源站格式，可被下游 CMS 直接采集 |
 | GET / POST | `/mcp` | MCP server（JSON-RPC：`initialize` / `tools/list` / `tools/call`） |
 | GET | `/docs` · `/openapi.json` | OpenAPI 文档 |
@@ -366,6 +404,8 @@ uv run feicms passwd --user admin --password 你的密码   # 写回 .env，重�
 uv run feicms passwd --user admin                       # 留空则随机生成
 ```
 
+不想开终端的话：面板「配置 → 管理员账号」可以改用户名/密码（留空则随机生成，明文只显示一次）并生成一个 1 小时有效的 token 给 curl 用；写回 `.env` 后需要 `./server.sh restart` 才生效。
+
 `/provide/vod`（给下游 CMS 采集的兼容接口）默认匿名开放；想保护它设 `FEICMS_PUBLIC_PROVIDE=false`。
 
 > 密码明文保存在 `.env`，而 `.env` 已在 `.gitignore` 里，不会进仓库。
@@ -384,7 +424,7 @@ uv run feicms apikey revoke 3
 uv run feicms apikey update 3 --enabled --scopes read
 ```
 
-数据库里只存 **sha256 哈希**，明文只在创建时打印一次，丢了只能重新创建。管理面板左侧的 **「AI / MCP 接入」** 页面可以创建 / 停用 / 删除 key、复制客户端配置、实时列出 MCP 工具，并附带使用说明。
+数据库里只存 **sha256 哈希**，明文只在创建时打印一次，丢了只能重新创建。管理面板左侧的 **「AI / MCP 接入」** 页面可以创建 / 停用 / 删除 key、复制客户端配置、实时列出 MCP 工具，还有一个**工具试跑**面板：选工具、填 JSON 参数，直接调 `POST /mcp`（用当前登录身份），返回结果和 AI 客户端看到的完全一致，包括播放源 URL。
 
 使用：
 

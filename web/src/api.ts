@@ -215,6 +215,49 @@ export interface ImageBatchResult {
   elapsed_ms: number;
 }
 
+export interface ImageLayout {
+  root: string;
+  exists: boolean;
+  files: number;
+  buckets: number;
+  busiest: number;
+  top: { path: string; files: number }[];
+}
+
+export interface SourceImportResult {
+  parsed: number;
+  created: number;
+  updated: number;
+  skipped: string[];
+}
+
+export interface SchedulerState {
+  auto_collect: boolean;
+  auto_images: boolean;
+  collect_interval_minutes: number;
+  health_interval_minutes: number;
+  image_interval_minutes: number;
+  last_collect_at: string | null;
+  last_health_at: string | null;
+  last_image_at: string | null;
+  last_collect_result: { sources: number; inserted: number; updated: number; failed: number } | null;
+  collect_running: boolean;
+  collect_progress: CollectProgress;
+}
+
+export interface McpToolResult {
+  content: { type: string; text: string }[];
+  structuredContent?: unknown;
+  isError?: boolean;
+}
+
+export interface McpEnvelope {
+  jsonrpc: string;
+  id?: number | null;
+  result?: McpToolResult;
+  error?: { code: number; message: string };
+}
+
 const TOKEN_KEY = "feicms_token";
 
 export function getToken(): string {
@@ -247,6 +290,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(`${res.status} ${text}`);
   }
   return res.json() as Promise<T>;
+}
+
+/** Fetch a protected file (backup / source list) and save it with the browser. */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  const res = await authorizedFetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const blob = await res.blob();
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
 }
 
 export interface AuthStatus {
@@ -389,6 +446,32 @@ export const api = {
   },
   imagePrune: (deleteFiles = true) => request<{ removed: number; files_deleted: number }>(`/api/images/prune?delete_files=${deleteFiles}`, { method: "POST" }),
   imageRepair: () => request<{ restored: number; requeued: number; files_deleted: number }>("/api/images/repair", { method: "POST" }),
+  imageLayout: (top = 12) => request<ImageLayout>(`/api/images/layout?top=${top}`),
+  importSources: (text: string, maxPages?: number, enabled = true) =>
+    request<SourceImportResult>(
+      "/api/sources/import",
+      { method: "POST", body: JSON.stringify({ text, max_pages: maxPages, enabled }) }
+    ),
+  scheduler: () => request<SchedulerState>("/api/scheduler"),
+  setScheduler: (body: {
+    auto_collect?: boolean;
+    auto_images?: boolean;
+    collect_interval_minutes?: number;
+    health_interval_minutes?: number;
+    image_interval_minutes?: number;
+  }) => request<SchedulerState>("/api/scheduler", { method: "POST", body: JSON.stringify(body) }),
+  setAdminPassword: (body: { username?: string; password?: string }) =>
+    request<{ user: string; password: string; env_file: string; restart_required: boolean }>(
+      "/api/admin/password",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  adminToken: (ttl = 3600) =>
+    request<{ token: string; user: string; expires_in: number }>(`/api/admin/token?ttl=${ttl}`, { method: "POST" }),
+  mcpCall: (name: string, args: Record<string, unknown> = {}) =>
+    request<McpEnvelope>("/mcp", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: { name, arguments: args } }),
+    }),
   apiKeys: () => request<ApiKey[]>("/api/apikeys"),
   mcpInfo: () => request<McpInfo>("/mcp"),
   mcpTools: () => request<McpTool[]>("/api/mcp/tools"),

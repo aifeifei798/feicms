@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type Config, type MergeResult } from "./api";
+import { api, downloadFile, type Config, type MergeResult, type SchedulerState } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -31,10 +31,94 @@ export default function Settings({ notify }: { notify: Notify }) {
   const [config, setConfig] = React.useState<Config | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [mergePreview, setMergePreview] = React.useState<MergeResult | null>(null);
+  const [scheduler, setScheduler] = React.useState<SchedulerState | null>(null);
+  const [intervals, setIntervals] = React.useState({ collect: "", health: "", image: "" });
+  const [adminUser, setAdminUser] = React.useState("");
+  const [adminPassword, setAdminPassword] = React.useState("");
+  const [token, setToken] = React.useState("");
 
   React.useEffect(() => {
     api.config().then(setConfig).catch((e) => notify((e as Error).message, "error"));
+    api
+      .scheduler()
+      .then((s) => {
+        setScheduler(s);
+        setIntervals({
+          collect: String(s.collect_interval_minutes),
+          health: String(s.health_interval_minutes),
+          image: String(s.image_interval_minutes),
+        });
+      })
+      .catch((e) => notify((e as Error).message, "error"));
   }, [notify]);
+
+  const saveScheduler = async () => {
+    setBusy(true);
+    try {
+      const body: Record<string, number> = {};
+      if (intervals.collect) body.collect_interval_minutes = Number(intervals.collect);
+      if (intervals.health) body.health_interval_minutes = Number(intervals.health);
+      if (intervals.image) body.image_interval_minutes = Number(intervals.image);
+      const s = await api.setScheduler(body);
+      setScheduler(s);
+      notify("自动任务间隔已更新（立即生效）");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleScheduler = async (key: "auto_collect" | "auto_images") => {
+    try {
+      const s = await api.setScheduler({ [key]: !scheduler?.[key] });
+      setScheduler(s);
+      notify(`${key === "auto_collect" ? "自动采集" : "自动海报下载"} ${s[key] ? "已开启" : "已关闭"}`);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
+
+  const exportLibrary = async (fmt: "jsonl" | "json") => {
+    setBusy(true);
+    try {
+      await downloadFile(`/api/export?fmt=${fmt}&limit=100000`, `feicms-export.${fmt}`);
+      notify("影片库备份已下载");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changePassword = async () => {
+    setBusy(true);
+    try {
+      const r = await api.setAdminPassword({
+        username: adminUser || undefined,
+        password: adminPassword || undefined,
+      });
+      setAdminPassword(r.password);
+      setAdminUser(r.user);
+      notify(
+        `管理员账号已写入 .env：${r.user} / ${r.password}${r.restart_required ? "（重启服务后生效）" : ""}`
+      );
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const makeToken = async () => {
+    try {
+      const r = await api.adminToken(3600);
+      setToken(r.token);
+      notify("已生成 1 小时有效的 token");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
 
   const prune = async () => {
     try {
@@ -196,6 +280,125 @@ export default function Settings({ notify }: { notify: Notify }) {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-1.5 mt-3">
+        <div className="card bg-base-100 border border-base-300">
+          <div className="card-body">
+            <h2 className="card-title">自动任务</h2>
+            <p className="muted">
+              后台循环（自动采集、健康检查、海报下载）可以在这里开关，改间隔不需要重启服务。
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                className={`btn btn-sm ${scheduler?.auto_collect ? "btn-primary" : "btn-outline"}`}
+                onClick={() => toggleScheduler("auto_collect")}
+                disabled={busy}
+              >
+                自动采集 {scheduler?.auto_collect ? "已开启" : "已关闭"}
+              </button>
+              <button
+                className={`btn btn-sm ${scheduler?.auto_images ? "btn-primary" : "btn-outline"}`}
+                onClick={() => toggleScheduler("auto_images")}
+                disabled={busy}
+              >
+                自动海报 {scheduler?.auto_images ? "已开启" : "已关闭"}
+              </button>
+              {scheduler?.collect_running && <span className="badge badge-primary">采集进行中</span>}
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <label className="label mr-2">
+                <span className="muted">采集间隔（分钟）</span>
+                <input className="input input-bordered input-sm" value={intervals.collect} onChange={(e) => setIntervals({ ...intervals, collect: e.target.value })} />
+              </label>
+              <label className="label mr-2">
+                <span className="muted">健康检查间隔</span>
+                <input className="input input-bordered input-sm" value={intervals.health} onChange={(e) => setIntervals({ ...intervals, health: e.target.value })} />
+              </label>
+              <label className="label mr-2">
+                <span className="muted">海报间隔</span>
+                <input className="input input-bordered input-sm" value={intervals.image} onChange={(e) => setIntervals({ ...intervals, image: e.target.value })} />
+              </label>
+              <button className="btn btn-sm btn-outline" onClick={saveScheduler} disabled={busy}>
+                保存间隔
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span className="muted">上次采集：{scheduler?.last_collect_at ? new Date(scheduler.last_collect_at).toLocaleString() : "—"}</span>
+              <span className="muted">上次健康检查：{scheduler?.last_health_at ? new Date(scheduler.last_health_at).toLocaleString() : "—"}</span>
+              <span className="muted">上次海报：{scheduler?.last_image_at ? new Date(scheduler.last_image_at).toLocaleString() : "—"}</span>
+            </div>
+            {scheduler?.last_collect_result && (
+              <p className="muted mt-1">
+                最近一轮：{scheduler.last_collect_result.sources} 个站点 · 新增 {scheduler.last_collect_result.inserted} ·
+                更新 {scheduler.last_collect_result.updated} · 失败 {scheduler.last_collect_result.failed}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="card bg-base-100 border border-base-300">
+          <div className="card-body">
+            <h2 className="card-title">备份与导出</h2>
+            <p className="muted">
+              影片库导出为 JSONL / JSON（含每个站点的播放源），站点列表导出为 YAML / JSON / CSV，
+              可以直接喂给 <span className="mono">feicms seed</span> 或另一台实例。
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button className="btn btn-sm btn-outline" onClick={() => exportLibrary("jsonl")} disabled={busy}>
+                导出影片库 JSONL
+              </button>
+              <button className="btn btn-sm btn-outline" onClick={() => exportLibrary("json")} disabled={busy}>
+                导出影片库 JSON
+              </button>
+              <button
+                className="btn btn-sm btn-outline"
+                onClick={() => downloadFile("/api/sources/export?fmt=yaml", "sources.yaml").then(() => notify("站点列表已导出")).catch((e) => notify((e as Error).message, "error"))}
+              >
+                导出站点列表
+              </button>
+            </div>
+            <p className="muted mt-2">
+              导出的是合并后的影片库，不含上游站点的原始抓取缓存。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="card bg-base-100 border border-base-300 mt-3">
+        <div className="card-body">
+          <h2 className="card-title">管理员账号</h2>
+          <p className="muted">
+            修改管理员账号会写入项目根目录的 <span className="mono">.env</span>；
+            留空密码则随机生成。改完后重启服务生效（<span className="mono">./server.sh restart</span>）。
+          </p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            <input className="input input-bordered input-sm" value={adminUser} onChange={(e) => setAdminUser(e.target.value)} placeholder="管理员用户名" />
+            <input className="input input-bordered input-sm" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="新密码（留空 = 随机）" />
+            <button className="btn btn-sm btn-primary" onClick={changePassword} disabled={busy}>
+              {busy ? "处理中…" : "保存账号"}
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={() => setAdminPassword(randomPassword())}
+            >
+              随机生成密码
+            </button>
+            <button className="btn btn-sm btn-outline" onClick={makeToken}>生成 curl 用的 token</button>
+          </div>
+          {token && (
+            <div className="code-block mt-2">
+              <span className="mono">{token}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
     </section>
   );
+}
+
+function randomPassword(): string {
+  const bytes = new Uint8Array(12);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

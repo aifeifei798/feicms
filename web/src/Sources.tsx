@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type Source, type Subscription, type SyncResult } from "./api";
+import { api, downloadFile, type Source, type SourceImportResult, type Subscription, type SyncResult } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -169,6 +169,8 @@ export default function Sources({ notify }: { notify: Notify }) {
         </div>
       </div>
 
+      <SourceImportPanel notify={notify} onImported={load} />
+
       {(editing || creating) && (
         <SourceForm
           source={editing}
@@ -181,6 +183,112 @@ export default function Sources({ notify }: { notify: Notify }) {
         />
       )}
     </section>
+  );
+}
+
+function SourceImportPanel({ notify, onImported }: { notify: Notify; onImported: () => Promise<void> }) {
+  const [open, setOpen] = React.useState(false);
+  const [text, setText] = React.useState("");
+  const [maxPages, setMaxPages] = React.useState("");
+  const [enabled, setEnabled] = React.useState(true);
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<SourceImportResult | null>(null);
+
+  const run = async () => {
+    if (!text.trim()) {
+      notify("先粘贴站点列表", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api.importSources(
+        text,
+        maxPages === "" ? undefined : Number(maxPages),
+        enabled
+      );
+      setResult(r);
+      notify(
+        `解析 ${r.parsed} 条：新增 ${r.created}，更新 ${r.updated}${r.skipped.length ? `，跳过 ${r.skipped.length}` : ""}`
+      );
+      await onImported();
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportList = async (fmt: string) => {
+    try {
+      await downloadFile(`/api/sources/export?fmt=${fmt}`, `sources.${fmt}`);
+      notify(`已导出站点列表（${fmt}）`);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
+
+  return (
+    <div className="card bg-base-100 border border-base-300 mt-3">
+      <div className="card-body">
+        <h2 className="card-title">
+          站点列表
+          <button className="btn btn-sm btn-ghost ml-2" onClick={() => setOpen((v) => !v)}>
+            {open ? "收起导入" : "批量导入"}
+          </button>
+        </h2>
+        <p className="muted">
+          仓库里不包含站点列表，站点由你自己维护。这里可以批量导入，也可以把当前列表导出备份。
+        </p>
+        <div className="flex flex-wrap gap-2 mt-2">
+          <button className="btn btn-sm btn-outline" onClick={() => exportList("yaml")}>导出 YAML</button>
+          <button className="btn btn-sm btn-outline" onClick={() => exportList("json")}>导出 JSON</button>
+          <button className="btn btn-sm btn-outline" onClick={() => exportList("csv")}>导出 CSV</button>
+        </div>
+
+        {open && (
+          <div className="mt-3">
+            <textarea
+              className="textarea input-bordered mono"
+              rows={8}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={"站点名|https://example.com|auto|100\nhttps://another.example.com"}
+            ></textarea>
+            <p className="muted mt-1">
+              每行一条：<code>名称|url|格式|可用率</code>，格式可写 <code>xml</code> / <code>json</code> / <code>auto</code>；
+              只写 URL 也可以。已存在的 URL 会被更新而不是重复添加。
+            </p>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <label className="label mr-2">
+                <span className="muted">统一页数上限</span>
+                <input className="input input-bordered input-sm" value={maxPages} onChange={(e) => setMaxPages(e.target.value)} placeholder="留空 = 每站默认" />
+              </label>
+              <label className="label mr-2">
+                <span className="muted">导入后启用</span>
+                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+              </label>
+              <button className="btn btn-sm btn-primary" onClick={run} disabled={busy}>
+                {busy ? "导入中…" : "导入"}
+              </button>
+            </div>
+            {result && (
+              <div className="mt-2">
+                <span className="badge badge-success">新增 {result.created}</span>
+                <span className="badge badge-info">更新 {result.updated}</span>
+                {result.skipped.length ? <span className="badge badge-warning">跳过 {result.skipped.length}</span> : null}
+                {result.skipped.length ? (
+                  <ul className="muted mt-1">
+                    {result.skipped.slice(0, 20).map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

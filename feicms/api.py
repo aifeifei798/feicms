@@ -27,13 +27,12 @@ log = logging.getLogger("feicms")
 async def lifespan(app: FastAPI):
     await init_db()
     await ensure_default_subscriptions()
-    tasks = []
-    if settings.auto_collect:
-        tasks.append(asyncio.create_task(auto_collect_loop()))
-        tasks.append(asyncio.create_task(auto_health_loop()))
-        tasks.append(asyncio.create_task(auto_subscribe_loop()))
-    if settings.image_auto:
-        tasks.append(asyncio.create_task(auto_image_loop()))
+    tasks = [
+        asyncio.create_task(auto_collect_loop()),
+        asyncio.create_task(auto_health_loop()),
+        asyncio.create_task(auto_subscribe_loop()),
+        asyncio.create_task(auto_image_loop()),
+    ]
     log.info(
         "feicms API ready (db=%s, auto_collect=%s, images=%s, auth=%s)",
         settings.database_url,

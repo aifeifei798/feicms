@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type DownloadProgress, type ImageRecord, type ImageStats } from "./api";
+import { api, type DownloadProgress, type ImageLayout, type ImageRecord, type ImageStats } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -27,6 +27,7 @@ export default function Images({ notify }: { notify: Notify }) {
   const [offset, setOffset] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
   const [progress, setProgress] = React.useState<DownloadProgress | null>(null);
+  const [layout, setLayout] = React.useState<ImageLayout | null>(null);
 
   const refreshProgress = React.useCallback(() => {
     api
@@ -43,7 +44,7 @@ export default function Images({ notify }: { notify: Notify }) {
   }, [busy, refreshProgress]);
 
   const load = React.useCallback(async () => {
-    const [s, list] = await Promise.all([
+    const [s, list, buckets] = await Promise.all([
       api.imageStats(),
       api.images({
         ...(status ? { status } : {}),
@@ -51,9 +52,11 @@ export default function Images({ notify }: { notify: Notify }) {
         limit: Number(limit),
         offset,
       }),
+      api.imageLayout(12),
     ]);
     setStats(s);
     setImages(list);
+    setLayout(buckets);
   }, [status, host, limit, offset]);
 
   React.useEffect(() => {
@@ -144,6 +147,20 @@ export default function Images({ notify }: { notify: Notify }) {
             磁盘上实际文件 {stats?.files_on_disk ?? 0} 个 · 数据库是索引，服务通过 <code>/images/&lt;id&gt;</code> 访问本地文件，
             未下载时自动跳转到原外链。
           </p>
+          {layout && layout.exists && (
+            <div className="mt-2">
+              <p className="muted">
+                实际分桶：{layout.buckets} 个目录 · 最忙分桶 {layout.busiest} 个文件
+              </p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {layout.top.map((bucket) => (
+                  <span className="badge badge-ghost mono" key={bucket.path}>
+                    {bucket.path} · {bucket.files}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

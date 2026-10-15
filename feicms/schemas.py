@@ -120,6 +120,27 @@ class EnableRequest(BaseModel):
     enabled: bool = True
 
 
+class SourceImportRequest(BaseModel):
+    """Bulk source list, pasted as `name|url|format|uptime` lines (or YAML/JSON)."""
+
+    text: str
+    max_pages: Optional[int] = Field(None, ge=0, le=500)
+    enabled: bool = True
+
+
+class SchedulerUpdate(BaseModel):
+    auto_collect: Optional[bool] = None
+    auto_images: Optional[bool] = None
+    collect_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    health_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    image_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
+
+
+class AdminPasswordRequest(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
 class Stats(BaseModel):
     sources: int
     enabled_sources: int

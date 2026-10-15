@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
+import secrets
+from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
@@ -25,7 +30,7 @@ from .collector import (
     repair_plays,
     start_collect_all,
 )
-from .config import settings
+from .config import settings, update_env_file
 from .db import session
 from .health import health_check_all
 from .images import (
@@ -38,10 +43,12 @@ from .images import (
     scan_images,
 )
 from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video
+from .scheduler import scheduler_status, set_scheduler
 from .schemas import (
     ApiKeyCreate,
     ApiKeyOut,
     ApiKeyUpdate,
+    AdminPasswordRequest,
     CollectRequest,
     EnableRequest,
     HealthReport,
@@ -49,7 +56,9 @@ from .schemas import (
     ImageOut,
     LoginRequest,
     Page,
+    SchedulerUpdate,
     SourceCreate,
+    SourceImportRequest,
     SourceOut,
     SourceUpdate,
     Stats,
@@ -58,6 +67,7 @@ from .schemas import (
     VideoOut,
     VideoSummary,
 )
+from .seed import parse_sources_text
 from .subscribe import detect_kind, ensure_default_subscriptions, sync_all, sync_subscription
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
@@ -168,6 +178,95 @@ async def create_source(payload: SourceCreate) -> Source:
         s.add(src)
         await s.flush()
         return src
+
+
+@router.post("/sources/import")
+async def import_sources(payload: SourceImportRequest) -> dict[str, Any]:
+    """Bulk-import a source list pasted into the panel.
+
+    Accepts `name|url|format|uptime` lines, bare URLs, or a YAML/JSON document.
+    Existing URLs are refreshed instead of duplicated.
+    """
+    entries = parse_sources_text(payload.text)
+    created = 0
+    updated = 0
+    skipped: list[str] = []
+
+    async with session() as s:
+        for entry in entries:
+            if payload.max_pages is not None:
+                entry["max_pages"] = payload.max_pages
+            if not payload.enabled:
+                entry["enabled"] = False
+
+            existing = await s.scalar(select(Source).where(Source.url == entry["url"]))
+            if existing is None:
+                if await s.scalar(select(Source).where(Source.name == entry["name"])):
+                    skipped.append(f"{entry['name']}：名称已存在，跳过")
+                    continue
+                s.add(Source(**entry))
+                created += 1
+            else:
+                name_taken = await s.scalar(
+                    select(Source).where(Source.name == entry["name"], Source.id != existing.id)
+                )
+                if name_taken is None:
+                    existing.name = entry["name"]
+                for field_name in ("api_format", "priority", "tags", "uptime"):
+                    value = entry.get(field_name)
+                    if value not in (None, ""):
+                        setattr(existing, field_name, value)
+                if payload.max_pages is not None:
+                    existing.max_pages = entry["max_pages"]
+                updated += 1
+        await s.commit()
+
+    return {"parsed": len(entries), "created": created, "updated": updated, "skipped": skipped}
+
+
+@router.get("/sources/export")
+async def export_sources(
+    enabled_only: bool = False,
+    fmt: str = Query("yaml", pattern="^(yaml|json|csv)$"),
+) -> Response:
+    """Download the current source list (yaml / json / csv)."""
+    async with session() as s:
+        stmt = select(Source).order_by(Source.priority.desc(), Source.id)
+        if enabled_only:
+            stmt = stmt.where(Source.enabled)
+        rows = list(await s.scalars(stmt))
+
+    data = [
+        {
+            "name": r.name,
+            "url": r.url,
+            "api_format": r.api_format,
+            "enabled": r.enabled,
+            "priority": r.priority,
+            "max_pages": r.max_pages,
+            "tags": r.tags,
+            "uptime": r.uptime,
+        }
+        for r in rows
+    ]
+
+    if fmt == "json":
+        body = json.dumps(data, ensure_ascii=False, indent=2)
+    elif fmt == "csv":
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["name", "url", "api_format", "enabled", "priority", "max_pages", "tags", "uptime"])
+        for row in data:
+            writer.writerow([row[key] for key in ("name", "url", "api_format", "enabled", "priority", "max_pages", "tags", "uptime")])
+        body = buffer.getvalue()
+    else:
+        body = yaml.safe_dump({"sources": data}, allow_unicode=True, sort_keys=False)
+
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=sources.{fmt}"},
+    )
 
 
 @router.get("/sources/{source_id}", response_model=SourceOut)
@@ -391,6 +490,28 @@ async def list_images(
         if q:
             stmt = stmt.where(Image.host.like(f"%{q}%"))
         return list(await s.scalars(stmt.order_by(Image.id.desc()).limit(limit).offset(offset)))
+
+
+@router.get("/images/layout")
+async def images_layout(top: int = Query(12, ge=1, le=50)) -> dict[str, Any]:
+    """Poster directory structure: bucket count, busiest buckets, total files."""
+    root = Path(settings.image_dir)
+    if not root.exists():
+        return {"root": str(root), "exists": False, "files": 0, "buckets": 0, "busiest": 0, "top": []}
+
+    shards = [d for d in root.glob("*/*") if d.is_dir()]
+    counts = {d: sum(1 for f in d.iterdir() if f.is_file()) for d in shards}
+    return {
+        "root": str(root),
+        "exists": True,
+        "files": sum(counts.values()),
+        "buckets": len(shards),
+        "busiest": max(counts.values(), default=0),
+        "top": [
+            {"path": str(shard.relative_to(root)), "files": count}
+            for shard, count in sorted(counts.items(), key=lambda kv: -kv[1])[:top]
+        ],
+    }
 
 
 @router.get("/images/{image_id}", response_model=ImageOut)
@@ -656,6 +777,94 @@ async def merge_duplicates_endpoint(dry_run: bool = False) -> dict[str, Any]:
     `?dry_run=true` only reports how many groups would be merged.
     """
     return await merge_duplicates(dry_run=dry_run)
+
+
+@router.get("/export")
+async def export_videos(
+    limit: int = Query(10000, ge=1, le=100000),
+    q: str = "",
+    fmt: str = Query("jsonl", pattern="^(jsonl|json)$"),
+) -> Response:
+    """Download the merged library as JSONL/JSON for backup or migration."""
+    async with session() as s:
+        stmt = select(Video).order_by(Video.last_updated.desc()).limit(limit)
+        if q:
+            stmt = stmt.where(Video.name.like(f"%{q}%"))
+        videos = list(await s.scalars(stmt))
+        by_video: dict[int, list[SourceItem]] = {}
+        if videos:
+            for item in await s.scalars(
+                select(SourceItem).where(SourceItem.video_id.in_([v.id for v in videos]))
+            ):
+                by_video.setdefault(item.video_id, []).append(item)
+
+    records = [
+        {
+            "id": v.id,
+            "name": v.name,
+            "type": v.type_name,
+            "year": v.year,
+            "area": v.area,
+            "blurb": v.blurb,
+            "pic": v.pic,
+            "source_count": v.source_count,
+            "sources": [
+                {
+                    "source_id": i.source_id,
+                    "vod_id": i.source_vod_id,
+                    "plays": json.loads(i.plays or "[]"),
+                }
+                for i in by_video.get(v.id, [])
+            ],
+        }
+        for v in videos
+    ]
+
+    if fmt == "json":
+        body = json.dumps(records, ensure_ascii=False, indent=2)
+    else:
+        body = "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n"
+
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=feicms-export.{fmt}"},
+    )
+
+
+@router.get("/scheduler")
+async def get_scheduler() -> dict[str, Any]:
+    """State of the background loops (auto collect / health / posters)."""
+    return scheduler_status()
+
+
+@router.post("/scheduler")
+async def update_scheduler(payload: SchedulerUpdate) -> dict[str, Any]:
+    """Turn the background loops on/off or change their intervals at runtime."""
+    return set_scheduler(**payload.model_dump(exclude_unset=True))
+
+
+@keys_router.post("/admin/password")
+async def set_admin_password(payload: AdminPasswordRequest) -> dict[str, Any]:
+    """Write the admin account into .env. The new password is shown once."""
+    user = (payload.username or settings.admin_user or "admin").strip()
+    password = payload.password or secrets.token_urlsafe(12)
+    path = update_env_file({"FEICMS_ADMIN_USER": user, "FEICMS_ADMIN_PASSWORD": password})
+    return {
+        "user": user,
+        "password": password,
+        "env_file": str(path),
+        "restart_required": settings.admin_user != user or settings.admin_password != password,
+    }
+
+
+@keys_router.post("/admin/token")
+async def create_admin_token(ttl: int = Query(3600, ge=60, le=86400 * 30)) -> dict[str, Any]:
+    """Generate a signed token for curl / scripts (admin account only)."""
+    if not auth_enabled():
+        raise HTTPException(400, "认证未启用：FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD 为空")
+    user = (settings.admin_user or "admin").strip()
+    return {"token": make_token(user, ttl), "user": user, "expires_in": ttl}
 
 
 @router.get("/jobs")
