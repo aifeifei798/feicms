@@ -73,6 +73,9 @@ cd web && pnpm install && pnpm run build     # 产物 web/dist，由 FastAPI 挂
 - `http://localhost:8000/docs` — OpenAPI 交互式文档
 - `http://localhost:8000/api/stats` — 总览统计
 
+默认监听 `0.0.0.0:8000`，所以局域网里的其它设备（手机/其它电脑）也能直接访问 `http://<机器IP>:8000/`。
+`./server.sh url` 会打印本机 + 局域网地址；只想本机访问：`./server.sh start --host 127.0.0.1`。
+
 ---
 
 ## 3. 站点列表从哪里来

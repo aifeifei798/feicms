@@ -150,5 +150,9 @@ run_py feicms seed
 
 printf '\n\033[1m安装完成\033[0m\n'
 echo "启动服务:   ./server.sh start"
-echo "打开面板:   http://127.0.0.1:${FEICMS_PORT:-8000}/"
+echo "默认监听:   0.0.0.0:${FEICMS_PORT:-8000}（局域网其它设备也能访问）"
+echo "本机面板:   http://127.0.0.1:${FEICMS_PORT:-8000}/"
+for ip in $(hostname -I 2>/dev/null); do
+  echo "局域网面板: http://$ip:${FEICMS_PORT:-8000}/"
+done
 echo "API 文档:   http://127.0.0.1:${FEICMS_PORT:-8000}/docs"

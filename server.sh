@@ -3,6 +3,8 @@
 #
 #   ./server.sh start          启动（后台，日志写到 data/server.log）
 #   ./server.sh start --user admin --password xxx   先写入 .env 的账号再启动
+#   ./server.sh start --host 0.0.0.0 --port 8000    临时覆盖监听地址（默认 0.0.0.0）
+#   ./server.sh url            打印本机 + 局域网访问地址
 #   ./server.sh stop           停止
 #   ./server.sh restart        重启
 #   ./server.sh status         查看运行状态 / 健康 / 是否开启登录
@@ -53,6 +55,25 @@ port_pid() {
   fi
 }
 
+lan_ips() {
+  if command -v hostname >/dev/null 2>&1; then
+    hostname -I 2>/dev/null
+  elif command -v ip >/dev/null 2>&1; then
+    ip -4 -o addr scope global 2>/dev/null | awk '{print $4}'
+  fi
+}
+
+# 默认 FEICMS_HOST=0.0.0.0，所以局域网/其它机器也能访问；打印本机 + 局域网地址
+print_urls() {
+  local host="${FEICMS_HOST:-0.0.0.0}" port="${FEICMS_PORT:-8000}" ip
+  echo "本机:     http://127.0.0.1:$port/"
+  if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ] || [ -z "$host" ]; then
+    for ip in $(lan_ips); do
+      echo "局域网:   http://$ip:$port/"
+    done
+  fi
+}
+
 is_running() {
   if [ -f "$PID_FILE" ]; then
     local pid
@@ -66,14 +87,19 @@ is_running() {
 }
 
 cmd_start() {
-  # 可选：./server.sh start --user admin --password xxx  -> 先写 .env 再启动
-  local user="" password=""
+  # 可选：./server.sh start --user admin --password xxx   -> 先写 .env 再启动
+  #       ./server.sh start --host 0.0.0.0 --port 8000    -> 临时覆盖监听地址
+  local user="" password="" host_override="" port_override=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --user) user="${2:-}"; shift 2 ;;
       --user=*) user="${1#--user=}"; shift ;;
       --password) password="${2:-}"; shift 2 ;;
       --password=*) password="${1#--password=}"; shift ;;
+      --host) host_override="${2:-}"; shift 2 ;;
+      --host=*) host_override="${1#--host=}"; shift ;;
+      --port) port_override="${2:-}"; shift 2 ;;
+      --port=*) port_override="${1#--port=}"; shift ;;
       *) shift ;;
     esac
   done
@@ -99,8 +125,8 @@ cmd_start() {
     exit 1
   fi
   mkdir -p "$ROOT/data"
-  host="${FEICMS_HOST:-0.0.0.0}"
-  port="${FEICMS_PORT:-8000}"
+  host="${host_override:-${FEICMS_HOST:-0.0.0.0}}"
+  port="${port_override:-${FEICMS_PORT:-8000}}"
 
   if command -v uv >/dev/null 2>&1; then
     CMD=(uv run uvicorn feicms.api:app --host "$host" --port "$port")
@@ -110,7 +136,7 @@ cmd_start() {
 
   nohup "${CMD[@]}" > "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
-  echo "启动中 (pid $!) -> http://127.0.0.1:$port"
+  echo "启动中 (pid $!) -> $host:$port"
 
   for _ in $(seq 1 30); do
     if curl -s "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
@@ -169,7 +195,14 @@ cmd_status() {
   fi
   echo "健康: $(curl -s "http://127.0.0.1:$port/health" || echo '无法访问')"
   echo "认证: $(curl -s "http://127.0.0.1:$port/api/auth/status" || echo '无法访问')"
+  echo "监听: ${FEICMS_HOST:-0.0.0.0}:$port"
+  print_urls
   echo "日志: $LOG_FILE"
+}
+
+cmd_url() {
+  load_env
+  print_urls
 }
 
 cmd_logs() {
@@ -207,7 +240,7 @@ cmd_build() {
 }
 
 usage() {
-  sed -n '2,16p' "$0"
+  sed -n '2,18p' "$0"
 }
 
 command="${1:-help}"
@@ -218,6 +251,7 @@ case "$command" in
   stop) cmd_stop ;;
   restart) cmd_restart ;;
   status) cmd_status ;;
+  url) cmd_url ;;
   logs) cmd_logs "$@" ;;
   dev) cmd_dev ;;
   build) cmd_build ;;
