@@ -52,6 +52,13 @@ function cleanText(value: string): string {
     .trim();
 }
 
+function friendlyError(e: Error): string {
+  if (e.message.startsWith("401")) {
+    return "前台浏览已关闭（FEICMS_PUBLIC_SITE=false）。请通过 /admin 登录管理后台查看影片库。";
+  }
+  return e.message;
+}
+
 export default function Site() {
   const [route, setRoute] = React.useState<Route>(parseRoute(window.location.pathname));
   const [stats, setStats] = React.useState<SiteStats | null>(null);
@@ -66,7 +73,6 @@ export default function Site() {
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-
   const [detail, setDetail] = React.useState<Video | null>(null);
   const [related, setRelated] = React.useState<VideoSummary[]>([]);
   const [lineIndex, setLineIndex] = React.useState(0);
@@ -87,7 +93,7 @@ export default function Site() {
         setItems(page.items as VideoSummary[]);
         setTotal(page.total);
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
   }, [route, q, type, year, sort, offset]);
 
@@ -103,7 +109,7 @@ export default function Site() {
         setEpisodeIndex(0);
         document.title = `${video.name} · feicms 影视库`;
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
     siteApi
       .related(route.id)
