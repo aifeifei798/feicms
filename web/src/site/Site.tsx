@@ -1,5 +1,5 @@
 import React from "react";
-import { siteApi, type SiteFilters, type SiteStats, type Video, type VideoSummary } from "../api";
+import { siteApi, type SiteFilters, type Video, type VideoSummary } from "../api";
 import { POSTER_PLACEHOLDER, posterFallback } from "../poster";
 import Player from "./Player";
 
@@ -58,13 +58,11 @@ function friendlyError(e: Error): string {
 
 export default function Site() {
   const [route, setRoute] = React.useState<Route>(parseRoute(window.location.pathname));
-  const [stats, setStats] = React.useState<SiteStats | null>(null);
   const [filters, setFilters] = React.useState<SiteFilters | null>(null);
 
   const [q, setQ] = React.useState("");
   const [type, setType] = React.useState("");
   const [year, setYear] = React.useState("");
-  const [sort, setSort] = React.useState("updated");
   const [offset, setOffset] = React.useState(0);
   const [items, setItems] = React.useState<VideoSummary[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -75,28 +73,43 @@ export default function Site() {
   const [lineIndex, setLineIndex] = React.useState(0);
   const [episodeIndex, setEpisodeIndex] = React.useState(0);
   const [pageInput, setPageInput] = React.useState("1");
-
-  React.useEffect(() => {
-    siteApi.stats().then(setStats).catch(() => setStats(null));
-  }, []);
+  const [menu, setMenu] = React.useState<"type" | "year" | null>(null);
 
   React.useEffect(() => {
     siteApi.filters().then(setFilters).catch(() => setFilters(null));
   }, []);
+
+  // The nav dropdowns close on Esc or when clicking anywhere outside them.
+  React.useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    const onClick = (e: MouseEvent) => {
+      const el = e.target as Element | null;
+      if (el && !el.closest(".site-menu")) setMenu(null);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("click", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("click", onClick);
+    };
+  }, [menu]);
 
   React.useEffect(() => {
     if (route.view !== "home") return;
     setLoading(true);
     setError(null);
     siteApi
-      .videos({ q, type_name: type, year, sort, limit: PAGE_SIZE, offset })
+      .videos({ q, type_name: type, year, limit: PAGE_SIZE, offset })
       .then((page) => {
         setItems(page.items as VideoSummary[]);
         setTotal(page.total);
       })
       .catch((e: Error) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
-  }, [route, q, type, year, sort, offset]);
+  }, [route, q, type, year, offset]);
 
   React.useEffect(() => {
     if (route.view !== "video") return;
@@ -145,13 +158,91 @@ export default function Site() {
   return (
     <div className="site-shell">
       <header className="site-header">
-        <a className="site-brand" href="/" onClick={(e) => { e.preventDefault(); go({ view: "home" }); }}>
+        <a className="site-brand" href="/" onClick={(e) => { e.preventDefault(); go({ view: "home" }); setMenu(null); }}>
           <img src="/favicon-dark.svg" alt="feicms" />
           <span>
             <strong>feicms</strong>
             <small>影视资源库</small>
           </span>
         </a>
+
+        <div className="site-menu">
+          <button
+            type="button"
+            className="menu-trigger"
+            aria-expanded={menu === "type"}
+            onClick={() => setMenu(menu === "type" ? null : "type")}
+          >
+            类别
+            <span className="menu-value">{type || "全部"}</span>
+            <span className="menu-caret">▾</span>
+          </button>
+          {menu === "type" && (
+            <div className="menu-panel" role="menu">
+              <button
+                type="button"
+                className={`menu-item ${type === "" ? "menu-item-active" : ""}`}
+                onClick={() => { setType(""); setOffset(0); setMenu(null); }}
+              >
+                全部
+              </button>
+              {(filters?.types ?? []).map((t) => (
+                <button
+                  key={t.type_name}
+                  type="button"
+                  className={`menu-item ${type === t.type_name ? "menu-item-active" : ""}`}
+                  onClick={() => {
+                    setType(t.type_name);
+                    setOffset(0);
+                    setMenu(null);
+                    if (route.view !== "home") go({ view: "home" });
+                  }}
+                >
+                  {t.type_name} <span className="menu-count">{t.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="site-menu">
+          <button
+            type="button"
+            className="menu-trigger"
+            aria-expanded={menu === "year"}
+            onClick={() => setMenu(menu === "year" ? null : "year")}
+          >
+            年份
+            <span className="menu-value">{year || "全部"}</span>
+            <span className="menu-caret">▾</span>
+          </button>
+          {menu === "year" && (
+            <div className="menu-panel" role="menu">
+              <button
+                type="button"
+                className={`menu-item ${year === "" ? "menu-item-active" : ""}`}
+                onClick={() => { setYear(""); setOffset(0); setMenu(null); }}
+              >
+                全部年份
+              </button>
+              {(filters?.years ?? []).map((y) => (
+                <button
+                  key={y}
+                  type="button"
+                  className={`menu-item ${year === y ? "menu-item-active" : ""}`}
+                  onClick={() => {
+                    setYear(y);
+                    setOffset(0);
+                    setMenu(null);
+                    if (route.view !== "home") go({ view: "home" });
+                  }}
+                >
+                  {y}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <form
           className="site-search"
@@ -168,6 +259,7 @@ export default function Site() {
             onChange={(e) => {
               setQ(e.target.value);
               setOffset(0);
+              setMenu(null);
               if (route.view !== "home") go({ view: "home" });
             }}
           />
@@ -181,49 +273,6 @@ export default function Site() {
 
       {route.view === "home" ? (
         <main className="site-main">
-          <section className="site-hero">
-            <div>
-              <h1>聚合 {stats?.sources ?? 0} 个资源站 · {stats?.videos ?? 0} 部影片</h1>
-              <p className="muted">
-                海报本地化 {stats?.posters ?? 0} 张
-                {stats?.last_updated ? ` · 最近更新 ${formatDate(stats.last_updated)}` : ""}
-                {stats?.adult_videos
-                  ? ` · 成人内容 ${stats.adult_videos} 部${stats.hide_adult ? "（已屏蔽）" : "（显示中）"}`
-                  : ""}
-              </p>
-            </div>
-            <div className="hero-actions">
-              <select className="select select-sm" value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="updated">最近更新</option>
-                <option value="name">名称</option>
-                <option value="source_count">来源最多</option>
-              </select>
-              {filters?.years?.length ? (
-                <select className="select select-sm" value={year} onChange={(e) => { setYear(e.target.value); setOffset(0); }}>
-                  <option value="">全部年份</option>
-                  {filters.years.map((y) => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              ) : null}
-            </div>
-          </section>
-
-          <div className="chip-row">
-            <button className={`chip ${type === "" ? "chip-active" : ""}`} onClick={() => { setType(""); setOffset(0); }}>
-              全部
-            </button>
-            {(filters?.types ?? []).slice(0, 18).map((t) => (
-              <button
-                key={t.type_name}
-                className={`chip ${type === t.type_name ? "chip-active" : ""}`}
-                onClick={() => { setType(t.type_name); setOffset(0); }}
-              >
-                {t.type_name} <span className="chip-count">{t.count}</span>
-              </button>
-            ))}
-          </div>
-
           {error && <div className="site-error">{error}</div>}
 
           <div className="poster-grid">
