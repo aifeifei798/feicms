@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -10,6 +12,21 @@ from .config import settings
 from .models import Base
 
 IS_SQLITE = settings.database_url.startswith("sqlite")
+
+
+def _ensure_sqlite_dir(url: str) -> None:
+    """Create the parent directory of a sqlite file so a fresh checkout works."""
+    if not url.startswith("sqlite"):
+        return
+    database = make_url(url).database
+    if not database or database == ":memory:":
+        return
+    path = Path(database)
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_sqlite_dir(settings.database_url)
 
 engine = create_async_engine(
     settings.database_url,

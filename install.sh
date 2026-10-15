@@ -140,6 +140,7 @@ fi
 
 # ---------------------------------------------------------------- database
 step "初始化数据库"
+mkdir -p data data/images
 if [ ! -f sources.yaml ] && [ -f sources.example.yaml ]; then
   echo "没有 sources.yaml，先复制模板（真实站点列表需要你自己填或用源订阅）"
   cp sources.example.yaml sources.yaml
