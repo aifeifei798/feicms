@@ -404,6 +404,46 @@ def test_a_running_sweep_blocks_another_one():
     asyncio.run(_run())
 
 
+def test_a_broken_source_does_not_abort_the_sweep():
+    """One source blowing up must not take a multi-hour sweep down with it."""
+
+    async def _run() -> None:
+        bad = await _make_source("崩溃站", max_pages=1)
+        good = await _make_source("健康站", max_pages=1)
+        calls = {"n": 0}
+
+        def factory():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("stub client exploded")
+            return StubClient(pagecount=1, per_page=10)
+
+        results = await collect_all(source_ids=[bad.id, good.id], client_factory=factory)
+        assert len(results) == 2
+        by_name = {r.source_name: r for r in results}
+        assert "内部错误" in (by_name["崩溃站"].error or "")
+        assert by_name["健康站"].error is None
+        assert by_name["健康站"].inserted == 10
+
+    asyncio.run(_run())
+
+
+def test_a_broken_progress_callback_does_not_abort_the_sweep():
+    async def _run() -> None:
+        src = await _make_source("回调炸站", max_pages=5)
+        results = await collect_all(
+            source_ids=[src.id],
+            client_factory=lambda: StubClient(pagecount=2, per_page=10),
+            on_progress=lambda *_: (_ for _ in ()).throw(RuntimeError("bad callback")),
+            on_result=lambda *_: (_ for _ in ()).throw(RuntimeError("bad callback")),
+        )
+        assert len(results) == 1
+        assert results[0].error is None
+        assert results[0].inserted == 20
+
+    asyncio.run(_run())
+
+
 def test_merge_duplicates_keeps_plays_and_metadata():
     """Legacy `title|year` signatures split one show into two rows; merging must
     move the source records (and their play sources) to the richest row."""

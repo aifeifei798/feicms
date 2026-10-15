@@ -455,19 +455,31 @@ async def collect_all(
     sem = asyncio.Semaphore(limit) if limit and limit > 0 else None
 
     async def run(src: Source) -> CollectResult:
-        client = client_factory() if client_factory is not None else None
-        page_cb = (
-            (lambda snap: on_progress(src.id, {**snap, "name": src.name}))
-            if on_progress is not None
-            else None
-        )
-        if sem is None:
-            result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
-        else:
-            async with sem:
+        page_cb = None
+        if on_progress is not None:
+
+            def page_cb(snap: dict[str, Any]) -> None:
+                # progress reporting is cosmetic: never let it break a multi-hour sweep
+                try:
+                    on_progress(src.id, {**snap, "name": src.name})
+                except Exception:  # noqa: BLE001
+                    log.warning("progress callback failed for %s", src.name)
+
+        try:
+            client = client_factory() if client_factory is not None else None
+            if sem is None:
                 result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
+            else:
+                async with sem:
+                    result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
+        except Exception as exc:  # noqa: BLE001 - one broken source must not abort the sweep
+            log.exception("source %s crashed", src.name)
+            result = CollectResult(source_id=src.id, source_name=src.name, error=f"内部错误: {exc}")
         if on_result is not None:
-            on_result(result)
+            try:
+                on_result(result)
+            except Exception:  # noqa: BLE001
+                log.warning("result callback failed for %s", src.name)
         return result
 
     try:

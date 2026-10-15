@@ -263,27 +263,31 @@ def collect(
 
         def on_result(r: CollectResult) -> None:
             status = "done" if not (r.error or r.stopped_reason) else "failed"
+            tag = "[green]完成[/green]" if status == "done" else "[red]失败[/red]"
             scope = f"{r.pages}/{r.pagecount or '?'}页"
             note = r.error or r.stopped_reason or ""
             if r.warnings:
                 note += f" (跳过 {len(r.warnings)} 页)"
             console.print(
-                f"[{status}] {r.source_name}: {scope} new={r.inserted} updated={r.updated} "
+                f"{tag} {r.source_name}: {scope} new={r.inserted} updated={r.updated} "
                 f"skipped={r.skipped} total={r.total} {r.elapsed_ms / 1000:.1f}s {note}"
             )
-            live[source_id] = {
-                "source_id": r.source_id,
-                "name": r.source_name,
-                "pages": r.pages,
-                "pagecount": r.pagecount,
-                "inserted": r.inserted,
-                "updated": r.updated,
-                "skipped": r.skipped,
-                "status": status,
-                "note": note,
-            }
-            finished.append({"name": r.source_name, "status": status, "note": note})
-            write_status()
+            try:
+                live[r.source_id] = {
+                    "source_id": r.source_id,
+                    "name": r.source_name,
+                    "pages": r.pages,
+                    "pagecount": r.pagecount,
+                    "inserted": r.inserted,
+                    "updated": r.updated,
+                    "skipped": r.skipped,
+                    "status": status,
+                    "note": note,
+                }
+                finished.append({"name": r.source_name, "status": status, "note": note})
+                write_status()
+            except Exception:  # noqa: BLE001 - status bookkeeping must never kill a sweep
+                pass
 
         console.print(
             f"[green]采集开始[/green] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
