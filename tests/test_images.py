@@ -8,7 +8,14 @@ from sqlalchemy import select  # noqa: E402
 from feicms.config import settings  # noqa: E402
 from feicms.db import init_db, session  # noqa: E402
 from feicms.fetcher import FetchResult  # noqa: E402
-from feicms.images import download_images, image_stats, normalize_image_url, repair_images, scan_images  # noqa: E402
+from feicms.images import (  # noqa: E402
+    download_images,
+    download_progress,
+    image_stats,
+    normalize_image_url,
+    repair_images,
+    scan_images,
+)
 from feicms.models import Image, Source, SourceItem, Video  # noqa: E402
 from feicms.normalizer import build_signature  # noqa: E402
 
@@ -18,6 +25,8 @@ WEBP = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"vp10data"
 SAME_A = "https://a.example.com/poster-a.jpg"
 SAME_B = "https://b.example.com/poster-b.jpg"
 SAME_BYTES = b"\x89PNG\r\n\x1a\n" + b"identical-bytes-served-by-two-hosts"
+PROGRESS_OK = "https://progress.example.com/poster.png"
+PROGRESS_BAD = "https://progress-bad.example.com/missing.png"
 
 
 class StubClient:
@@ -136,6 +145,26 @@ def test_failed_download_is_recorded_and_retried_later():
         assert image.attempts >= 1
         assert image.status in ("pending", "failed")  # retried until max attempts
         assert "404" in (image.last_error or "")
+
+    asyncio.run(_run())
+
+
+def test_download_progress_reports_counters():
+    async def _run() -> None:
+        await init_db()
+        async with session() as s:
+            s.add(Video(name="进度海报", signature=build_signature("进度海报"), pic=PROGRESS_OK))
+            s.add(Video(name="进度坏海报", signature=build_signature("进度坏海报"), pic=PROGRESS_BAD))
+        await scan_images()
+
+        result = await download_images(limit=50, concurrency=2, client=StubClient({PROGRESS_OK: PNG}))
+        progress = download_progress()
+        assert progress["queued"] == result.attempted
+        assert progress["downloaded"] == result.downloaded
+        assert progress["failed"] == result.failed
+        assert progress["running"] is False
+        assert progress["finished_at"]
+        assert any(err["host"] == "progress-bad.example.com" for err in progress["errors"])
 
     asyncio.run(_run())
 

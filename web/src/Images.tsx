@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type ImageRecord, type ImageStats } from "./api";
+import { api, type DownloadProgress, type ImageRecord, type ImageStats } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -26,6 +26,21 @@ export default function Images({ notify }: { notify: Notify }) {
   const [limit, setLimit] = React.useState("60");
   const [offset, setOffset] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
+  const [progress, setProgress] = React.useState<DownloadProgress | null>(null);
+
+  const refreshProgress = React.useCallback(() => {
+    api
+      .downloadProgress()
+      .then(setProgress)
+      .catch(() => undefined);
+  }, []);
+
+  React.useEffect(() => {
+    refreshProgress();
+    if (!busy) return;
+    const timer = setInterval(refreshProgress, 800);
+    return () => clearInterval(timer);
+  }, [busy, refreshProgress]);
 
   const load = React.useCallback(async () => {
     const [s, list] = await Promise.all([
@@ -152,6 +167,47 @@ export default function Images({ notify }: { notify: Notify }) {
         <button className="btn btn-sm btn-outline" onClick={repair} disabled={busy} title="校对数据库状态与磁盘文件">
           校对索引
         </button>
+      </div>
+
+      <div className="card bg-base-100 border border-base-300 mt-3">
+        <div className="card-body">
+          <h2 className="card-title">
+            下载进度
+            {progress?.running ? <span className="badge badge-primary">进行中</span> : null}
+          </h2>
+          {progress ? (
+            <>
+              <progress
+                className="progress"
+                value={progress.downloaded + progress.duplicates + progress.failed + progress.skipped}
+                max={progress.queued || 0}
+              ></progress>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <span className="badge">队列 {progress.queued}</span>
+                <span className="badge badge-success">成功 {progress.downloaded}</span>
+                <span className="badge badge-info">重复 {progress.duplicates}</span>
+                <span className="badge badge-error">失败 {progress.failed}</span>
+                <span className="badge badge-ghost">跳过 {progress.skipped}</span>
+                <span className="muted">{humanBytes(progress.bytes)}</span>
+                <span className="muted">{(progress.elapsed_ms / 1000).toFixed(1)}s</span>
+                {progress.finished_at && (
+                  <span className="muted">结束于 {new Date(progress.finished_at).toLocaleString()}</span>
+                )}
+              </div>
+              {progress.errors.length ? (
+                <ul className="muted mt-2">
+                  {progress.errors.slice(0, 10).map((err, i) => (
+                    <li key={i}>
+                      <span className="mono">{err.host}</span> — {err.error}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted">还没有下载记录，点「下载一批」开始。</p>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 mt-3">

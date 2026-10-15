@@ -163,6 +163,27 @@ async def _insert_ignore(s, rows: list[dict[str, object]]) -> int:
 # Guards the dedupe check + file write in download_images().
 _batch_running = False
 
+# Live counters for the batch that is running right now (or the last one that
+# finished). The admin UI polls download_progress() while a batch is running.
+_progress: dict[str, object] = {
+    "running": False,
+    "queued": 0,
+    "downloaded": 0,
+    "duplicates": 0,
+    "failed": 0,
+    "skipped": 0,
+    "bytes": 0,
+    "started_at": None,
+    "finished_at": None,
+    "elapsed_ms": 0.0,
+    "errors": [],
+}
+
+
+def download_progress() -> dict[str, object]:
+    """Snapshot of the current/last poster download batch."""
+    return dict(_progress)
+
 
 async def download_images(
     limit: int | None = None,
@@ -208,16 +229,52 @@ async def _download_batch(
         pending = list(await s.scalars(stmt.order_by(Image.id).limit(batch)))
 
     if not pending:
+        _progress.update(
+            {
+                "running": False,
+                "queued": 0,
+                "downloaded": 0,
+                "duplicates": 0,
+                "failed": 0,
+                "skipped": 0,
+                "bytes": 0,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "elapsed_ms": 0.0,
+                "errors": [],
+            }
+        )
         return result
+
+    _progress.update(
+        {
+            "running": True,
+            "queued": len(pending),
+            "downloaded": 0,
+            "duplicates": 0,
+            "failed": 0,
+            "skipped": 0,
+            "bytes": 0,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "elapsed_ms": 0.0,
+            "errors": [],
+        }
+    )
 
     async def process(image: Image) -> None:
         async with sem:
+            def count(field: str, error: str | None = None) -> None:
+                setattr(result, field, getattr(result, field) + 1)
+                _progress[field] = int(_progress.get(field, 0)) + 1
+                if error and len(_progress["errors"]) < 20:
+                    _progress["errors"].append({"host": image.host, "error": error[:200]})
+
             # Another batch (auto loop, or a second CLI run) may already have
             # handled this row; re-check before spending a request on it.
             async with session() as s:
                 fresh = await s.get(Image, image.id)
                 if fresh is None or fresh.status != "pending":
-                    result.skipped += 1
+                    count("skipped")
                     return
 
             try:
@@ -227,7 +284,7 @@ async def _download_batch(
                     max_size=settings.image_max_size,
                 )
             except Exception as exc:  # noqa: BLE001 - recorded per image
-                result.failed += 1
+                count("failed", str(exc))
                 async with session() as s:
                     row = await s.get(Image, image.id)
                     if row is not None and not row.path:
@@ -239,7 +296,7 @@ async def _download_batch(
             data = response.content or b""
             ext = detect_extension(data, "")
             if ext is None:
-                result.skipped += 1
+                count("skipped")
                 async with session() as s:
                     row = await s.get(Image, image.id)
                     if row is not None and not row.path:
@@ -267,7 +324,7 @@ async def _download_batch(
                             row.status = "duplicate"
                             row.path = twin.path
                             row.downloaded_at = twin.downloaded_at
-                        result.duplicates += 1
+                        count("duplicates")
                         return
 
                     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -283,8 +340,9 @@ async def _download_batch(
                         row.status = "downloaded"
                     row.downloaded_at = datetime.now(timezone.utc)
                     row.last_error = None
-                result.downloaded += 1
+                count("downloaded")
                 result.bytes += len(data)
+                _progress["bytes"] = int(_progress.get("bytes", 0)) + len(data)
 
             if settings.image_delay:
                 await asyncio.sleep(settings.image_delay)
@@ -292,6 +350,13 @@ async def _download_batch(
     await asyncio.gather(*(process(image) for image in pending))
     result.attempted = len(pending)
     result.elapsed_ms = (time.perf_counter() - started) * 1000
+    _progress.update(
+        {
+            "running": False,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_ms": result.elapsed_ms,
+        }
+    )
 
     if own_client:
         await client.aclose()

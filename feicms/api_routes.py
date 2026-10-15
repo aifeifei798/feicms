@@ -21,7 +21,15 @@ from .collector import collect_all, collect_source
 from .config import settings
 from .db import session
 from .health import health_check_all
-from .images import download_images, image_stats, normalize_image_url, prune_images, repair_images, scan_images
+from .images import (
+    download_images,
+    download_progress,
+    image_stats,
+    normalize_image_url,
+    prune_images,
+    repair_images,
+    scan_images,
+)
 from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video
 from .schemas import (
     ApiKeyCreate,
@@ -335,6 +343,12 @@ async def images_download(payload: ImageDownloadRequest) -> dict[str, Any]:
         "bytes": result.bytes,
         "elapsed_ms": round(result.elapsed_ms, 1),
     }
+
+
+@router.get("/images/download/progress")
+async def images_download_progress() -> dict[str, Any]:
+    """Live counters for the poster batch running now (or the last one that finished)."""
+    return download_progress()
 
 
 @router.get("/images", response_model=list[ImageOut])

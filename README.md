@@ -226,7 +226,8 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET | `/api/images/stats` | 图片库统计 |
 | POST | `/api/images/scan` | 登记待下载图片 |
 | POST | `/api/images/download` | 下载一批 `{limit, concurrency, include_failed}` |
-| GET | `/api/images` | 图片列表（`?status=&host=&limit=`） |
+| GET | `/api/images/download/progress` | 当前/最近一批的实时计数（队列、成功、重复、失败、跳过、字节、耗时、错误） |
+| GET | `/api/images` | 图片列表（`?status=&q=&limit=&offset=`） |
 | GET | `/api/images/{id}` | 单条图片记录 |
 | POST | `/api/images/prune` | 删除无引用图片 |
 | POST | `/api/images/repair` | 校对索引与磁盘 |

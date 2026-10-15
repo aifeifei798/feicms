@@ -321,12 +321,19 @@ const GROUPS: Group[] = [
       },
       {
         method: "GET",
+        path: "/api/images/download/progress",
+        summary: "当前（或最近一批）下载批次的实时计数：队列 / 成功 / 重复 / 失败 / 跳过 / 字节 / 耗时 / 错误",
+        example: "/api/images/download/progress",
+        tryable: true,
+      },
+      {
+        method: "GET",
         path: "/api/images",
         summary: "列出图片记录（状态、域名、大小、路径）",
         params: [
           { name: "status", type: "string", note: "downloaded | pending | duplicate | failed" },
           { name: "q", type: "string", note: "按图片域名过滤" },
-          { name: "limit", type: "int", default: "50", note: "1–200" },
+          { name: "limit", type: "int", default: "50", note: "1–500" },
           { name: "offset", type: "int", default: "0", note: "分页偏移" },
         ],
         example: "/api/images?status=downloaded&limit=10",

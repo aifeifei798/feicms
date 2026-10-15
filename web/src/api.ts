@@ -160,6 +160,20 @@ export interface ImageRecord {
   downloaded_at: string | null;
 }
 
+export interface DownloadProgress {
+  running: boolean;
+  queued: number;
+  downloaded: number;
+  duplicates: number;
+  failed: number;
+  skipped: number;
+  bytes: number;
+  started_at: string | null;
+  finished_at: string | null;
+  elapsed_ms: number;
+  errors: { host: string; error: string }[];
+}
+
 export interface ImageStats {
   image_dir: string;
   total: number;
@@ -340,6 +354,7 @@ export const api = {
   imageScan: () => request<{ queued: number; seen: number }>("/api/images/scan", { method: "POST" }),
   imageDownload: (body: { limit?: number; concurrency?: number; retry_failed?: boolean } = {}) =>
     request<ImageBatchResult>("/api/images/download", { method: "POST", body: JSON.stringify(body) }),
+  downloadProgress: () => request<DownloadProgress>("/api/images/download/progress"),
   images: (params: Record<string, string | number> = {}) => {
     const entries = Object.entries(params).map(([k, v]) => [k, String(v)]);
     const qs = new URLSearchParams(entries).toString();
