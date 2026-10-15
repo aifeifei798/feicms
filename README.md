@@ -30,6 +30,7 @@
 | 海报本地化 | `vod_pic` 图片下载到本地，按内容 hash 分桶存储，见 [第 6 节](#6-海报图片本地化目录分桶策略) |
 | 对外提供 | `GET /provide/vod` 输出标准资源站格式，下游 CMS 可以直接采集 |
 | 前台浏览 | 深色影院风的前台站点（`/`）：搜索、分类、海报墙、影片详情 + 内嵌播放器 + 剧集列表，只读，不需要登录 |
+| 成人内容过滤 | 前台默认屏蔽成人内容（按分类/标题关键词），开关在前台和管理面板都有，关键词可改 |
 | 管理面板 | React + Vite + Tailwind + DaisyUI（`/admin`）：站点 CRUD、批量导入/导出站点、采集、健康、影片搜索、图片库、任务历史、自动任务开关、备份导出、管理员账号、API key、MCP 工具试跑、配置 |
 
 技术栈：Python 3.10+ / FastAPI / SQLAlchemy 2.0 (async) / `curl_cffi`（浏览器 TLS 指纹） / `lxml` / typer + rich；前端 React 18 + Vite 5 + Tailwind 4 + DaisyUI 5。
@@ -201,6 +202,7 @@ feicms stats                       # 统计
 feicms prune                       # 删除无播放源记录 / 孤儿影片
 feicms repair-plays                # 用当前解析规则重建播放源结构 + 清理文本字段（不联网）
 feicms merge-duplicates [--dry-run] # 合并同标题的重复影片（旧 signature 带年份造成的拆分）
+feicms adult [--on|--off|--show 15] # 前台成人内容过滤：命中统计 / 开关（写 .env）
 feicms export [--out backup.jsonl]
 
 feicms images scan                 # 登记所有 pic 字段（不联网）
@@ -231,7 +233,7 @@ feicms serve [--host --port]
 | `collect` / `health` | 采集 → 采集全部 / 每站点「采集」「全量」 / 重试失败的；资源站 → 健康检查 | `POST /api/collect/start`, `GET /api/collect/progress`, `POST /api/health-check` |
 | `subscribe` | 资源站 → 源订阅 | `GET/POST/DELETE /api/subscriptions` |
 | `stats` | 首页总览 | `GET /api/stats` |
-| `prune` / `repair-plays` / `merge-duplicates` | 配置 → 数据维护 | `POST /api/prune` 等 |
+| `prune` / `repair-plays` / `merge-duplicates` / `adult` | 配置 → 数据维护 / 成人内容过滤 | `POST /api/prune` 等，`POST /api/adult-filter` |
 | `export` | 配置 → 备份与导出 | `GET /api/export?fmt=jsonl\|json` |
 | `images scan/download/stats/prune/repair/layout` | 图片库（扫描、下载一批、进度、列表、分桶结构） | `POST /api/images/scan` 等，`GET /api/images/layout` |
 | `apikey` | AI / MCP 接入 → 密钥管理 | `GET/POST/DELETE /api/apikeys` |
@@ -339,15 +341,27 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/site/stats` | 影片数 / 启用站点数 / 本地海报数 / 最近更新时间 |
+| GET | `/api/site/stats` | 影片数 / 启用站点数 / 本地海报数 / 最近更新时间 / 成人内容命中数 |
 | GET | `/api/site/filters` | 分类（带计数）、年份、地区 |
-| GET | `/api/site/videos` | 列表：`q, type_name, year, sort(updated\|name\|source_count), limit, offset` |
+| GET | `/api/site/videos` | 列表：`q, type_name, year, sort(updated\|name\|source_count), limit, offset, hide_adult` |
 | GET | `/api/site/videos/{id}` | 详情 + 全部播放源（含每集 URL） |
 | GET | `/api/site/videos/{id}/related` | 同分类推荐 |
 | GET | `/api/site/pic/{image_id}` | 本地海报，未下载则 302 到原 URL |
 
 默认**公开**（`FEICMS_PUBLIC_SITE=true`）。设成 `false` 后这些端点同样要求登录/API key，前台页面也就只能管理员看。
 `/`、`/video/{id}`、`/admin` 这类深链接由 SPA 兜底路由处理（真实静态文件优先，其余返回 `index.html`）。
+
+### 成人内容过滤
+
+前台（`/`）默认屏蔽成人内容：分类名或标题命中关键词的影片不进前台列表、搜索、分类计数，
+直接访问详情也返回 404。后台影片库（`/api/videos`）始终显示全部，采集与统计不受影响。
+
+- 开关：`FEICMS_HIDE_ADULT=true|false`，前台右上角也有切换（保存在浏览器 `localStorage`，
+  只影响当前访客，不改服务端默认）。
+- 关键词：管理面板「配置 → 成人内容过滤」可编辑，改动写回 `.env`，立即生效不用重启。
+  命令行等价：`uv run feicms adult`（查看命中）、`--on` / `--off`（开关）。
+- 关键词留空 = 用内置列表；显式设成空字符串 = 不屏蔽任何内容。
+- API：`POST /api/adult-filter`（需要登录）`{"hide_adult": true, "type_keywords": [...], "name_keywords": [...]}`。
 
 ---
 
@@ -387,6 +401,9 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_TOKEN_TTL` | 86400 | token 有效期（秒） |
 | `FEICMS_PUBLIC_PROVIDE` | true | `/provide/vod` 是否允许匿名访问 |
 | `FEICMS_PUBLIC_SITE` | true | 前台影视库（`/` 与 `/api/site/*`）是否公开；`false` 则前台也要登录 |
+| `FEICMS_HIDE_ADULT` | true | 前台屏蔽成人内容（分类或标题命中关键词）；后台影片库不受影响 |
+| `FEICMS_ADULT_TYPE_KEYWORDS` | （空 = 内置列表） | 分类关键词，逗号分隔；显式留空则只匹配标题 |
+| `FEICMS_ADULT_NAME_KEYWORDS` | （空 = 内置列表） | 标题关键词，逗号分隔 |
 
 ---
 

@@ -10,9 +10,11 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, not_, select
+from sqlalchemy.sql.expression import ColumnElement
 
 from .apikeys import create_api_key, delete_api_key, list_api_keys, update_api_key
+from .adult import adult_condition, adult_name_keywords, adult_type_keywords, is_adult
 from .auth import (
     TOKEN_COOKIE,
     auth_enabled,
@@ -45,6 +47,7 @@ from .images import (
 from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video
 from .scheduler import scheduler_status, set_scheduler
 from .schemas import (
+    AdultFilterUpdate,
     ApiKeyCreate,
     ApiKeyOut,
     ApiKeyUpdate,
@@ -765,6 +768,40 @@ async def config() -> dict[str, Any]:
         "port": settings.port,
         "auth_required": auth_enabled(),
         "admin_user": settings.admin_user,
+        "public_site": settings.public_site,
+        "hide_adult": settings.hide_adult,
+        "adult_type_keywords": list(adult_type_keywords()),
+        "adult_name_keywords": list(adult_name_keywords()),
+    }
+
+
+@router.post("/adult-filter")
+async def update_adult_filter(body: AdultFilterUpdate) -> dict[str, Any]:
+    """Turn the adult filter on/off and edit the keyword lists.
+
+    Changes are applied to the running process and written to .env so they
+    survive a restart. Only the public front site is filtered; the admin
+    library always shows everything.
+    """
+    if body.hide_adult is not None:
+        settings.hide_adult = body.hide_adult
+    if body.type_keywords is not None:
+        settings.adult_type_keywords = tuple(k.strip() for k in body.type_keywords if k.strip())
+    if body.name_keywords is not None:
+        settings.adult_name_keywords = tuple(k.strip() for k in body.name_keywords if k.strip())
+
+    values = {"FEICMS_HIDE_ADULT": "true" if settings.hide_adult else "false"}
+    if body.type_keywords is not None:
+        values["FEICMS_ADULT_TYPE_KEYWORDS"] = ",".join(settings.adult_type_keywords or ())
+    if body.name_keywords is not None:
+        values["FEICMS_ADULT_NAME_KEYWORDS"] = ",".join(settings.adult_name_keywords or ())
+    path = update_env_file(values)
+
+    return {
+        "hide_adult": settings.hide_adult,
+        "type_keywords": list(adult_type_keywords()),
+        "name_keywords": list(adult_name_keywords()),
+        "env_file": str(path),
     }
 
 
@@ -978,6 +1015,22 @@ def _site_pic(video: Video, pic_map: dict[str, int]) -> str | None:
     return f"/api/site/pic/{image_id}" if image_id else None
 
 
+def _effective_hide_adult(hide_adult: bool | None) -> bool:
+    return settings.hide_adult if hide_adult is None else hide_adult
+
+
+def _hide_adult(hide_adult: bool | None) -> ColumnElement | None:
+    """Condition that keeps adult records out of a query, or None when off.
+
+    `hide_adult` is the explicit query parameter; when it is absent the server
+    default (FEICMS_HIDE_ADULT, changeable from the panel) applies.
+    """
+    if not _effective_hide_adult(hide_adult):
+        return None
+    condition = adult_condition()
+    return not_(condition) if condition is not None else None
+
+
 def _summary(video: Video, pic_map: dict[str, int]) -> VideoSummary:
     return VideoSummary(
         id=video.id,
@@ -1001,39 +1054,46 @@ async def site_stats() -> dict[str, Any]:
             select(func.count(Image.id)).where(Image.status.in_(("downloaded", "duplicate")))
         )
         latest = await s.scalar(select(func.max(Video.last_updated)))
+        condition = adult_condition()
+        adult = await s.scalar(select(func.count(Video.id)).where(condition)) if condition is not None else 0
     return {
         "videos": videos or 0,
         "sources": sources or 0,
         "posters": posters or 0,
         "last_updated": latest.isoformat() if latest else None,
+        "adult_videos": adult or 0,
+        "hide_adult": settings.hide_adult,
     }
 
 
 @site_router.get("/filters")
-async def site_filters() -> dict[str, Any]:
+async def site_filters(hide_adult: bool | None = Query(None)) -> dict[str, Any]:
     """Categories, years and regions present in the library, with counts."""
     async with session() as s:
+        stmt = select(Video.type_name, func.count(Video.id))
+        filter_ = _hide_adult(hide_adult)
+        if filter_ is not None:
+            stmt = stmt.where(filter_)
         types = [
             {"type_name": name or "未分类", "count": count}
             for name, count in await s.execute(
-                select(Video.type_name, func.count(Video.id))
-                .group_by(Video.type_name)
-                .order_by(func.count(Video.id).desc())
+                stmt.group_by(Video.type_name).order_by(func.count(Video.id).desc())
             )
         ]
+        year_stmt = select(Video.year).where(Video.year != "")
+        area_stmt = select(Video.area).where(Video.area != "")
+        if filter_ is not None:
+            year_stmt = year_stmt.where(filter_)
+            area_stmt = area_stmt.where(filter_)
         years = [
             year
-            for year in await s.scalars(
-                select(Video.year).where(Video.year != "").group_by(Video.year).order_by(Video.year.desc())
-            )
+            for year in await s.scalars(year_stmt.group_by(Video.year).order_by(Video.year.desc()))
         ]
         areas = [
             area
-            for area in await s.scalars(
-                select(Video.area).where(Video.area != "").group_by(Video.area).order_by(Video.area)
-            )
+            for area in await s.scalars(area_stmt.group_by(Video.area).order_by(Video.area))
         ]
-    return {"types": types, "years": years, "areas": areas}
+    return {"types": types, "years": years, "areas": areas, "hide_adult": _effective_hide_adult(hide_adult)}
 
 
 @site_router.get("/videos")
@@ -1044,6 +1104,7 @@ async def site_videos(
     sort: str = Query("updated", pattern="^(updated|name|source_count)$"),
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    hide_adult: bool | None = Query(None),
 ) -> Page:
     async with session() as s:
         stmt = select(Video)
@@ -1053,6 +1114,9 @@ async def site_videos(
             stmt = stmt.where(Video.type_name == type_name)
         if year:
             stmt = stmt.where(Video.year == year)
+        filter_ = _hide_adult(hide_adult)
+        if filter_ is not None:
+            stmt = stmt.where(filter_)
 
         total = await s.scalar(select(func.count()).select_from(stmt.subquery()))
         order = {
@@ -1071,10 +1135,10 @@ async def site_videos(
 
 
 @site_router.get("/videos/{video_id}", response_model=VideoOut)
-async def site_video(video_id: int) -> VideoOut:
+async def site_video(video_id: int, hide_adult: bool | None = Query(None)) -> VideoOut:
     async with session() as s:
         video = await s.get(Video, video_id)
-        if video is None:
+        if video is None or (_effective_hide_adult(hide_adult) and is_adult(video)):
             raise HTTPException(404, "video not found")
         items = list(await s.scalars(select(SourceItem).where(SourceItem.video_id == video_id)))
         pic_map = await _local_pic_map(s, [video.pic])
@@ -1082,7 +1146,11 @@ async def site_video(video_id: int) -> VideoOut:
 
 
 @site_router.get("/videos/{video_id}/related")
-async def site_related(video_id: int, limit: int = Query(12, ge=1, le=40)) -> list[VideoSummary]:
+async def site_related(
+    video_id: int,
+    limit: int = Query(12, ge=1, le=40),
+    hide_adult: bool | None = Query(None),
+) -> list[VideoSummary]:
     """Same category, most recently updated, excluding the video itself."""
     async with session() as s:
         video = await s.get(Video, video_id)
@@ -1091,7 +1159,14 @@ async def site_related(video_id: int, limit: int = Query(12, ge=1, le=40)) -> li
         stmt = select(Video).where(Video.id != video_id)
         if video.type_name:
             stmt = stmt.where(Video.type_name == video.type_name)
-        videos = list(await s.scalars(stmt.order_by(Video.source_count.desc(), Video.last_updated.desc()).limit(limit)))
+        filter_ = _hide_adult(hide_adult)
+        if filter_ is not None:
+            stmt = stmt.where(filter_)
+        videos = list(
+            await s.scalars(
+                stmt.order_by(Video.source_count.desc(), Video.last_updated.desc()).limit(limit)
+            )
+        )
         pic_map = await _local_pic_map(s, [v.pic for v in videos])
         return [_summary(v, pic_map) for v in videos]
 

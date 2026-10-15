@@ -12,10 +12,11 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import func, select
 
-from .config import BASE_DIR, settings
+from .config import BASE_DIR, settings, update_env_file
 from .collector import collect_all, collect_source
 from .db import init_db, session
 from .health import health_check_all, health_rank
+from .adult import adult_condition, adult_name_keywords, adult_type_keywords, matched_keyword
 from .models import Source, Subscription, Video, SourceItem
 from .seed import load_sources
 from .subscribe import detect_kind, ensure_default_subscriptions, sync_all, sync_subscription
@@ -349,6 +350,62 @@ def stats() -> None:
             sources = await s.scalar(select(func.count()).select_from(Source))
             last = await s.scalar(select(func.max(Source.last_collect_at)))
         console.print(f"sources={sources} videos={videos} source_items={items} last_collect={last}")
+
+    asyncio.run(_run())
+
+
+@app.command("adult")
+def adult_filter(
+    on: bool = typer.Option(False, "--on", help="开启前台成人内容屏蔽（写入 .env）"),
+    off: bool = typer.Option(False, "--off", help="关闭前台成人内容屏蔽（写入 .env）"),
+    show: int = typer.Option(15, "--show", help="列出被屏蔽的影片条数"),
+) -> None:
+    """Report what the adult-content filter catches on the public front site."""
+    if on or off:
+        values = {"FEICMS_HIDE_ADULT": "true" if on else "false"}
+        path = update_env_file(values)
+        settings.hide_adult = on
+        console.print(f"FEICMS_HIDE_ADULT={values['FEICMS_HIDE_ADULT']} 已写入 {path}")
+
+    async def _run() -> None:
+        async with session() as s:
+            total = await s.scalar(select(func.count(Video.id)))
+            condition = adult_condition()
+            if condition is None:
+                adult, rows, types = 0, [], []
+            else:
+                adult = await s.scalar(select(func.count(Video.id)).where(condition))
+                rows = list(
+                    await s.scalars(
+                        select(Video).where(condition).order_by(Video.last_updated.desc()).limit(show)
+                    )
+                )
+                types = [
+                    (name or "未分类", count)
+                    for name, count in await s.execute(
+                        select(Video.type_name, func.count(Video.id))
+                        .where(condition)
+                        .group_by(Video.type_name)
+                        .order_by(func.count(Video.id).desc())
+                        .limit(15)
+                    )
+                ]
+
+        console.print(
+            f"屏蔽状态: {'开启' if settings.hide_adult else '关闭'}  "
+            f"命中 {adult}/{total} 条  分类关键词 {len(adult_type_keywords())} 个  标题关键词 {len(adult_name_keywords())} 个"
+        )
+        if not types:
+            console.print("没有命中任何记录")
+            return
+        table = Table(title="被屏蔽的分类")
+        table.add_column("分类")
+        table.add_column("条数", justify="right")
+        for name, count in types:
+            table.add_row(name, str(count))
+        console.print(table)
+        for video in rows:
+            console.print(f"  {video.id} {video.name} [{matched_keyword(video)}]")
 
     asyncio.run(_run())
 

@@ -27,6 +27,15 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_csv(name: str) -> tuple[str, ...] | None:
+    """Comma separated list. Returns None when the variable is not set at all,
+    so callers can tell "not configured" apart from "explicitly empty"."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -110,6 +119,13 @@ class Settings:
     # it can never touch sources, collection or configuration. Set false to make
     # the front site require a login/API key as well.
     public_site: bool = _env_bool("FEICMS_PUBLIC_SITE", True)
+
+    # Adult-content filter for the public front site. When on, records whose
+    # category or title matches the keyword lists are not listed. The lists are
+    # the defaults in feicms/adult.py and can be replaced from the panel or .env.
+    hide_adult: bool = _env_bool("FEICMS_HIDE_ADULT", True)
+    adult_type_keywords: tuple[str, ...] | None = field(default_factory=lambda: _env_csv("FEICMS_ADULT_TYPE_KEYWORDS"))
+    adult_name_keywords: tuple[str, ...] | None = field(default_factory=lambda: _env_csv("FEICMS_ADULT_NAME_KEYWORDS"))
 
     settings: dict = field(default_factory=dict)
 

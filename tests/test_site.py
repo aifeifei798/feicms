@@ -108,6 +108,94 @@ def test_front_site_filters_and_sorting():
     assert client.get("/api/site/videos", params={"sort": "bogus"}).status_code == 422
 
 
+def _seed_adult() -> int:
+    import asyncio
+
+    async def _inner() -> int:
+        await init_db()
+        async with session() as s:
+            src = await s.scalar(select(Source).where(Source.name == "前台测试站"))
+            if src is None:
+                src = Source(name="前台测试站", url="https://example.com/api.php/provide/vod/")
+                s.add(src)
+                await s.flush()
+
+            signature = build_signature("成人测试影片")
+            video = await s.scalar(select(Video).where(Video.signature == signature))
+            if video is None:
+                video = Video(
+                    name="成人测试影片",
+                    signature=signature,
+                    type_name="日本无码",
+                    year="2023",
+                    area="日本",
+                    source_count=1,
+                )
+                s.add(video)
+                await s.flush()
+            return video.id
+
+    return asyncio.run(_inner())
+
+
+def test_adult_filter_hides_records_by_default():
+    from feicms.config import settings
+
+    video_id = _seed_adult()
+    settings.hide_adult = True
+
+    hidden = client.get("/api/site/videos", params={"q": "成人测试"}).json()
+    assert hidden["total"] == 0
+
+    stats = client.get("/api/site/stats").json()
+    assert stats["hide_adult"] is True
+    assert stats["adult_videos"] >= 1
+
+    filters = client.get("/api/site/filters").json()
+    assert not any(t["type_name"] == "日本无码" for t in filters["types"])
+
+    assert client.get(f"/api/site/videos/{video_id}").status_code == 404
+
+    shown = client.get("/api/site/videos", params={"q": "成人测试", "hide_adult": "false"}).json()
+    assert shown["total"] == 1
+    assert client.get(f"/api/site/videos/{video_id}", params={"hide_adult": "false"}).status_code == 200
+    filters = client.get("/api/site/filters", params={"hide_adult": "false"}).json()
+    assert any(t["type_name"] == "日本无码" for t in filters["types"])
+
+
+def test_adult_filter_endpoint_changes_the_default():
+    from pathlib import Path
+
+    from feicms.adult import DEFAULT_ADULT_NAME_KEYWORDS, DEFAULT_ADULT_TYPE_KEYWORDS
+    from feicms.config import settings
+
+    env_path = Path("/tmp/opencode/feicms_adult_test.env")
+    os.environ["FEICMS_ENV_FILE"] = str(env_path)
+    previous = (settings.hide_adult, settings.adult_type_keywords, settings.adult_name_keywords)
+    try:
+        response = client.post("/api/adult-filter", json={"hide_adult": False, "type_keywords": ["无码"]})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["hide_adult"] is False
+        assert body["type_keywords"] == ["无码"]
+        assert "FEICMS_HIDE_ADULT=false" in env_path.read_text()
+
+        # The new default applies without a query parameter.
+        assert client.get("/api/site/videos", params={"q": "成人测试"}).json()["total"] == 1
+
+        # Narrowing the keyword list to something harmless hides nothing.
+        client.post("/api/adult-filter", json={"hide_adult": True, "type_keywords": ["zzzz-not-a-category"]})
+        assert client.get("/api/site/videos", params={"q": "成人测试"}).json()["total"] == 1
+
+        client.post("/api/adult-filter", json={"hide_adult": True, "type_keywords": ["无码"]})
+        assert client.get("/api/site/videos", params={"q": "成人测试"}).json()["total"] == 0
+    finally:
+        settings.hide_adult, settings.adult_type_keywords, settings.adult_name_keywords = previous
+        os.environ.pop("FEICMS_ENV_FILE", None)
+        env_path.unlink(missing_ok=True)
+        assert DEFAULT_ADULT_TYPE_KEYWORDS and DEFAULT_ADULT_NAME_KEYWORDS
+
+
 def test_spa_deep_links_fall_back_to_the_app():
     from feicms.api import STATIC_ROOT
 

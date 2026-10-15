@@ -407,6 +407,17 @@ export interface Config {
   port: number;
   auth_required: boolean;
   admin_user: string;
+  public_site: boolean;
+  hide_adult: boolean;
+  adult_type_keywords: string[];
+  adult_name_keywords: string[];
+}
+
+export interface AdultFilter {
+  hide_adult: boolean;
+  type_keywords: string[];
+  name_keywords: string[];
+  env_file: string;
 }
 
 export const api = {
@@ -442,6 +453,11 @@ export const api = {
   repairPlays: () => request<{ total: number; changed: number; videos: number }>("/api/repair-plays", { method: "POST" }),
   mergeDuplicates: (dryRun = false) =>
     request<MergeResult>(`/api/merge-duplicates?dry_run=${dryRun}`, { method: "POST" }),
+  setAdultFilter: (body: {
+    hide_adult?: boolean;
+    type_keywords?: string[];
+    name_keywords?: string[];
+  }) => request<AdultFilter>("/api/adult-filter", { method: "POST", body: JSON.stringify(body) }),
   subscriptions: () => request<Subscription[]>("/api/subscriptions"),
   createSubscription: (body: { url: string; kind?: string; enabled?: boolean }) =>
     request<Subscription>("/api/subscriptions", { method: "POST", body: JSON.stringify(body) }),
@@ -508,24 +524,28 @@ export interface SiteStats {
   sources: number;
   posters: number;
   last_updated: string | null;
+  adult_videos: number;
+  hide_adult: boolean;
 }
 
 export interface SiteFilters {
   types: { type_name: string; count: number }[];
   years: string[];
   areas: string[];
+  hide_adult: boolean;
 }
 
 export const siteApi = {
   stats: () => request<SiteStats>("/api/site/stats"),
-  filters: () => request<SiteFilters>("/api/site/filters"),
-  videos: (params: Record<string, string | number>) => {
+  filters: (hideAdult = true) => request<SiteFilters>(`/api/site/filters?hide_adult=${hideAdult}`),
+  videos: (params: Record<string, string | number | boolean>) => {
     const query = Object.entries(params)
       .filter(([, value]) => value !== "" && value !== undefined && value !== null)
       .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
       .join("&");
     return request<Page<VideoSummary>>(`/api/site/videos${query ? `?${query}` : ""}`);
   },
-  video: (id: number) => request<Video>(`/api/site/videos/${id}`),
-  related: (id: number) => request<VideoSummary[]>(`/api/site/videos/${id}/related`),
+  video: (id: number, hideAdult = true) => request<Video>(`/api/site/videos/${id}?hide_adult=${hideAdult}`),
+  related: (id: number, hideAdult = true) =>
+    request<VideoSummary[]>(`/api/site/videos/${id}/related?hide_adult=${hideAdult}`),
 };

@@ -142,6 +142,12 @@ class AdminPasswordRequest(BaseModel):
     password: Optional[str] = None
 
 
+class AdultFilterUpdate(BaseModel):
+    hide_adult: Optional[bool] = None
+    type_keywords: Optional[list[str]] = None
+    name_keywords: Optional[list[str]] = None
+
+
 class Stats(BaseModel):
     sources: int
     enabled_sources: int

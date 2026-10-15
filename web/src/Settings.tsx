@@ -1,5 +1,5 @@
 import React from "react";
-import { api, downloadFile, type Config, type MergeResult, type SchedulerState } from "./api";
+import { api, downloadFile, siteApi, type Config, type MergeResult, type SchedulerState } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -24,6 +24,11 @@ FEICMS_ADMIN_PASSWORD=改成强密码
 FEICMS_SECRET=可选：token 签名密钥
 FEICMS_TOKEN_TTL=86400
 FEICMS_PUBLIC_PROVIDE=true
+FEICMS_PUBLIC_SITE=true
+FEICMS_HIDE_ADULT=true
+# 前台成人内容过滤：分类/标题关键词（留空 = 用内置列表）
+FEICMS_ADULT_TYPE_KEYWORDS=
+FEICMS_ADULT_NAME_KEYWORDS=
 FEICMS_HOST=0.0.0.0
 FEICMS_PORT=8000`;
 
@@ -36,9 +41,19 @@ export default function Settings({ notify }: { notify: Notify }) {
   const [adminUser, setAdminUser] = React.useState("");
   const [adminPassword, setAdminPassword] = React.useState("");
   const [token, setToken] = React.useState("");
+  const [typeKeywords, setTypeKeywords] = React.useState("");
+  const [nameKeywords, setNameKeywords] = React.useState("");
+  const [adultCount, setAdultCount] = React.useState<number | null>(null);
 
   React.useEffect(() => {
-    api.config().then(setConfig).catch((e) => notify((e as Error).message, "error"));
+    api.config()
+      .then((c) => {
+        setConfig(c);
+        setTypeKeywords((c.adult_type_keywords ?? []).join(", "));
+        setNameKeywords((c.adult_name_keywords ?? []).join(", "));
+      })
+      .catch((e) => notify((e as Error).message, "error"));
+    siteApi.stats().then((s) => setAdultCount(s.adult_videos)).catch(() => setAdultCount(null));
     api
       .scheduler()
       .then((s) => {
@@ -143,6 +158,28 @@ export default function Settings({ notify }: { notify: Notify }) {
     }
   };
 
+  const saveAdultFilter = async (body: {
+    hide_adult?: boolean;
+    type_keywords?: string[];
+    name_keywords?: string[];
+  }) => {
+    setBusy(true);
+    try {
+      const r = await api.setAdultFilter(body);
+      setConfig((c) =>
+        c ? { ...c, hide_adult: r.hide_adult, adult_type_keywords: r.type_keywords, adult_name_keywords: r.name_keywords } : c
+      );
+      setTypeKeywords(r.type_keywords.join(", "));
+      setNameKeywords(r.name_keywords.join(", "));
+      notify(`成人内容过滤已更新（写入 ${r.env_file}）`);
+      siteApi.stats().then((s) => setAdultCount(s.adult_videos)).catch(() => setAdultCount(null));
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const previewMerge = async () => {
     try {
       const r = await api.mergeDuplicates(true);
@@ -205,6 +242,8 @@ export default function Settings({ notify }: { notify: Notify }) {
                     <tr><td>FEICMS_IMAGE_DIR</td><td className="mono">{config.image_dir}</td></tr>
                     <tr><td>FEICMS_IMAGE_BATCH</td><td>{config.image_batch}</td></tr>
                     <tr><td>FEICMS_IMAGE_AUTO</td><td>{config.image_auto ? "true" : "false"}</td></tr>
+                    <tr><td>FEICMS_PUBLIC_SITE</td><td>{config.public_site ? "true（前台公开浏览）" : "false（前台需要登录）"}</td></tr>
+                    <tr><td>FEICMS_HIDE_ADULT</td><td>{config.hide_adult ? "true（屏蔽成人内容）" : "false"}</td></tr>
                     <tr><td>FEICMS_ADMIN_USER</td><td className="mono">{config.admin_user || "（未设置）"}</td></tr>
                     <tr>
                       <td>登录认证</td>
@@ -280,6 +319,49 @@ export default function Settings({ notify }: { notify: Notify }) {
               </table>
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="card bg-base-100 border border-base-300 mt-3">
+        <div className="card-body">
+          <h2 className="card-title">成人内容过滤</h2>
+          <p className="muted">
+            前台（<span className="mono">/</span>）默认屏蔽成人内容：分类或标题命中关键词的影片不进前台列表、
+            分类计数和搜索。后台影片库始终显示全部。关键词改动会写入 <span className="mono">.env</span>，
+            重启后仍然生效。命令行等价：<span className="mono">uv run feicms adult --on / --off</span>。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              className={`btn btn-sm ${config?.hide_adult ? "btn-primary" : "btn-outline"}`}
+              onClick={() => saveAdultFilter({ hide_adult: !(config?.hide_adult ?? true) })}
+              disabled={busy}
+            >
+              {config?.hide_adult ? "屏蔽成人内容：开启" : "屏蔽成人内容：关闭"}
+            </button>
+            {adultCount !== null && <span className="muted">当前命中 {adultCount} 条记录</span>}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <label className="label mr-2">
+              <span className="muted">分类关键词（逗号分隔）</span>
+              <input className="input input-bordered input-sm" value={typeKeywords} onChange={(e) => setTypeKeywords(e.target.value)} />
+            </label>
+            <label className="label mr-2">
+              <span className="muted">标题关键词（逗号分隔）</span>
+              <input className="input input-bordered input-sm" value={nameKeywords} onChange={(e) => setNameKeywords(e.target.value)} />
+            </label>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={() =>
+                saveAdultFilter({
+                  type_keywords: typeKeywords.split(",").map((k) => k.trim()).filter(Boolean),
+                  name_keywords: nameKeywords.split(",").map((k) => k.trim()).filter(Boolean),
+                })
+              }
+              disabled={busy}
+            >
+              保存关键词
+            </button>
+          </div>
         </div>
       </div>
 
