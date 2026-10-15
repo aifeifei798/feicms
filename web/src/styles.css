@@ -638,29 +638,72 @@ body {
   font-size: 0.85rem;
 }
 
-.detail-grid {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 1.25rem;
+.detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
   margin-top: 1rem;
 }
-.detail-poster .poster-frame {
-  border-radius: 0.75rem;
-  border: 1px solid var(--line);
+.detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.detail-head h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
 }
 .detail-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin-top: 0.6rem;
 }
-.detail-body h1 {
-  margin: 0 0 0.4rem;
-  font-size: 1.6rem;
-  font-weight: 700;
+.detail-player {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.detail-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 0.7rem 0.8rem;
+}
+.control-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.control-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.now-playing {
+  font-size: 0.78rem;
+}
+.detail-info {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+.detail-poster .poster-frame {
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+}
+.detail-about {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 .detail-blurb {
-  margin: 0.5rem 0;
+  margin: 0;
   color: var(--text-dim);
 }
 
@@ -668,7 +711,6 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin: 0.75rem 0;
 }
 .line-tab {
   border: 1px solid var(--line);
@@ -747,7 +789,8 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin-top: 0.75rem;
+  max-height: 220px;
+  overflow-y: auto;
 }
 .episode {
   border: 1px solid var(--line);
@@ -790,10 +833,21 @@ body {
 }
 
 @media (max-width: 820px) {
-  .detail-grid {
-    grid-template-columns: 1fr;
+  .detail-info {
+    grid-template-columns: 150px 1fr;
   }
-  .detail-poster .poster-frame {
-    max-width: 260px;
+}
+@media (max-width: 520px) {
+  .detail-info {
+    grid-template-columns: 110px 1fr;
+  }
+  .detail-head h1 {
+    font-size: 1.25rem;
+  }
+  .episode-list {
+    max-height: 160px;
+  }
+  .player-wrap video {
+    max-height: none;
   }
 }

@@ -295,67 +295,82 @@ export default function Site() {
           {error && <div className="site-error">{error}</div>}
 
           {detail && (
-            <div className="detail-grid">
-              <div className="detail-poster">
-                <Poster item={detail} className="detail-poster-img" />
+            <div className="detail-stack">
+              <header className="detail-head">
+                <h1>{detail.name}</h1>
                 <div className="detail-meta">
                   <span className="badge">{detail.type_name || "未分类"}</span>
                   {detail.year && <span className="badge">{detail.year}</span>}
                   {detail.area && <span className="badge">{detail.area}</span>}
                   {detail.lang && <span className="badge">{detail.lang}</span>}
-                  <span className="badge">{detail.plays.length} 条线路</span>
+                  <span className="badge">{detail.source_count} 个资源站</span>
                 </div>
-              </div>
+              </header>
 
-              <div className="detail-body">
-                <h1>{detail.name}</h1>
-                {detail.blurb && <p className="detail-blurb">{cleanText(detail.blurb)}</p>}
-                {(detail.actor || detail.director) && (
-                  <p className="muted">
-                    {detail.director ? `导演：${cleanText(detail.director)} ` : ""}
-                    {detail.actor ? `主演：${cleanText(detail.actor)}` : ""}
-                  </p>
-                )}
-                <p className="muted">
-                  更新 {formatDate(detail.last_updated)} · 来源 {detail.source_count} 个资源站
-                </p>
+              {detail.plays.length === 0 ? (
+                <div className="site-error">这条影片没有可用的播放源。</div>
+              ) : (
+                <section className="detail-player">
+                  <Player
+                    url={detail.plays[lineIndex]?.episodes[episodeIndex]?.url ?? ""}
+                    poster={posterUrl(detail) || undefined}
+                  />
 
-                {detail.plays.length === 0 ? (
-                  <div className="site-error">这条影片没有可用的播放源。</div>
-                ) : (
-                  <>
-                    <div className="line-tabs">
-                      {detail.plays.map((play, index) => (
-                        <button
-                          key={`${play.from_name}-${index}`}
-                          className={`line-tab ${lineIndex === index ? "line-tab-active" : ""}`}
-                          onClick={() => { setLineIndex(index); setEpisodeIndex(0); }}
-                        >
-                          {play.from_name}
-                          <span className="chip-count">{play.episodes.length}</span>
-                        </button>
-                      ))}
+                  <div className="detail-controls">
+                    <div className="control-group">
+                      <span className="control-label">线路</span>
+                      <div className="line-tabs">
+                        {detail.plays.map((play, index) => (
+                          <button
+                            key={`${play.from_name}-${index}`}
+                            className={`line-tab ${lineIndex === index ? "line-tab-active" : ""}`}
+                            onClick={() => { setLineIndex(index); setEpisodeIndex(0); }}
+                          >
+                            {play.from_name}
+                            <span className="chip-count">{play.episodes.length}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    <Player
-                      url={detail.plays[lineIndex]?.episodes[episodeIndex]?.url ?? ""}
-                      poster={posterUrl(detail) || undefined}
-                    />
-
-                    <div className="episode-list">
-                      {detail.plays[lineIndex]?.episodes.map((episode, index) => (
-                        <button
-                          key={`${episode.name}-${index}`}
-                          className={`episode ${episodeIndex === index ? "episode-active" : ""}`}
-                          onClick={() => setEpisodeIndex(index)}
-                        >
-                          {episode.name}
-                        </button>
-                      ))}
+                    <div className="control-group">
+                      <span className="control-label">选集</span>
+                      <div className="episode-list">
+                        {detail.plays[lineIndex]?.episodes.map((episode, index) => (
+                          <button
+                            key={`${episode.name}-${index}`}
+                            className={`episode ${episodeIndex === index ? "episode-active" : ""}`}
+                            onClick={() => setEpisodeIndex(index)}
+                          >
+                            {episode.name}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </>
-                )}
-              </div>
+
+                    <span className="muted now-playing">
+                      正在播放：{detail.plays[lineIndex]?.from_name} ·
+                      {detail.plays[lineIndex]?.episodes[episodeIndex]?.name || "正片"}
+                    </span>
+                  </div>
+                </section>
+              )}
+
+              <section className="detail-info">
+                <div className="detail-poster">
+                  <Poster item={detail} className="detail-poster-img" />
+                </div>
+                <div className="detail-about">
+                  {detail.blurb && <p className="detail-blurb">{cleanText(detail.blurb)}</p>}
+                  {(detail.actor || detail.director) && (
+                    <p className="muted">
+                      {detail.director ? `导演：${cleanText(detail.director)} ` : ""}
+                      {detail.actor ? `主演：${cleanText(detail.actor)}` : ""}
+                    </p>
+                  )}
+                  <p className="muted">更新 {formatDate(detail.last_updated)}</p>
+                </div>
+              </section>
             </div>
           )}
 
