@@ -30,6 +30,18 @@ export default function Images({ notify }: { notify: Notify }) {
   const [progress, setProgress] = React.useState<DownloadProgress | null>(null);
   const [layout, setLayout] = React.useState<ImageLayout | null>(null);
   const [showErrors, setShowErrors] = React.useState(false);
+  const [pageInput, setPageInput] = React.useState("1");
+
+  const totalPages = () => Math.max(1, Math.ceil((stats?.total ?? 0) / Number(limit)));
+
+  const jumpToPage = (page: number) => {
+    const target = Math.min(Math.max(1, Number(page) || 1), totalPages());
+    setOffset((target - 1) * Number(limit));
+  };
+
+  React.useEffect(() => {
+    setPageInput(String(Math.floor(offset / Number(limit)) + 1));
+  }, [offset, limit]);
 
   const refreshProgress = React.useCallback(() => {
     api
@@ -354,18 +366,47 @@ export default function Images({ notify }: { notify: Notify }) {
             <option value="100">100 条</option>
             <option value="200">200 条</option>
           </select>
+          <button className="btn btn-sm btn-outline" onClick={() => setOffset(0)} disabled={offset === 0}>
+            首页
+          </button>
           <button className="btn btn-sm btn-outline" onClick={() => setOffset(Math.max(0, offset - Number(limit)))} disabled={offset === 0}>
             上一页
           </button>
-          <span className="muted">
-            第 {offset + 1}–{offset + images.length} 条（共 {stats?.total ?? 0} 条记录）
-          </span>
+          <div className="page-jump">
+            <span className="muted">第</span>
+            <input
+              className="input input-sm page-input"
+              type="number"
+              min="1"
+              max={totalPages()}
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  jumpToPage(Number(pageInput));
+                }
+              }}
+              aria-label="页码"
+            />
+            <span className="muted">/ {totalPages()} 页 · 共 {stats?.total ?? 0} 条</span>
+            <button className="btn btn-sm btn-outline" onClick={() => jumpToPage(Number(pageInput))}>
+              跳转
+            </button>
+          </div>
           <button
             className="btn btn-sm btn-outline"
             onClick={() => setOffset(offset + Number(limit))}
             disabled={offset + images.length >= (stats?.total ?? 0)}
           >
             下一页
+          </button>
+          <button
+            className="btn btn-sm btn-outline"
+            onClick={() => jumpToPage(totalPages())}
+            disabled={offset + images.length >= (stats?.total ?? 0)}
+          >
+            尾页
           </button>
         </div>
       </div>

@@ -74,6 +74,7 @@ export default function Site() {
   const [related, setRelated] = React.useState<VideoSummary[]>([]);
   const [lineIndex, setLineIndex] = React.useState(0);
   const [episodeIndex, setEpisodeIndex] = React.useState(0);
+  const [pageInput, setPageInput] = React.useState("1");
 
   React.useEffect(() => {
     siteApi.stats().then(setStats).catch(() => setStats(null));
@@ -121,6 +122,11 @@ export default function Site() {
     if (route.view === "home") document.title = "feicms 影视库";
   }, [route]);
 
+  // The jump box always mirrors the page actually on screen.
+  React.useEffect(() => {
+    setPageInput(String(Math.floor(offset / PAGE_SIZE) + 1));
+  }, [offset]);
+
   const go = (next: Route) => {
     const path = next.view === "video" ? `/video/${next.id}` : "/";
     window.history.pushState(next, "", path);
@@ -130,6 +136,11 @@ export default function Site() {
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+
+  const goToPage = (page: number) => {
+    const target = Math.min(Math.max(1, Number(page) || 1), pages);
+    setOffset((target - 1) * PAGE_SIZE);
+  };
 
   return (
     <div className="site-shell">
@@ -236,16 +247,43 @@ export default function Site() {
 
           {total > PAGE_SIZE && (
             <div className="site-pagination">
-              <button className="btn btn-sm btn-outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
+              <button className="btn btn-sm btn-outline" disabled={offset === 0} onClick={() => goToPage(1)}>
+                首页
+              </button>
+              <button className="btn btn-sm btn-outline" disabled={offset === 0} onClick={() => goToPage(currentPage - 1)}>
                 上一页
               </button>
-              <span className="muted">第 {currentPage} / {pages} 页 · 共 {total} 部</span>
+              <div className="page-jump">
+                <span className="muted">第</span>
+                <input
+                  className="input input-sm page-input"
+                  type="number"
+                  min="1"
+                  max={pages}
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      goToPage(Number(pageInput));
+                    }
+                  }}
+                  aria-label="页码"
+                />
+                <span className="muted">/ {pages} 页 · 共 {total} 部</span>
+                <button className="btn btn-sm btn-outline" onClick={() => goToPage(Number(pageInput))}>
+                  跳转
+                </button>
+              </div>
               <button
                 className="btn btn-sm btn-outline"
                 disabled={offset + PAGE_SIZE >= total}
-                onClick={() => setOffset(offset + PAGE_SIZE)}
+                onClick={() => goToPage(currentPage + 1)}
               >
                 下一页
+              </button>
+              <button className="btn btn-sm btn-outline" disabled={currentPage >= pages} onClick={() => goToPage(pages)}>
+                尾页
               </button>
             </div>
           )}

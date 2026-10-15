@@ -38,6 +38,17 @@ export default function Videos({ notify }: { notify: Notify }) {
   };
 
   const pages = Math.max(1, Math.ceil(total / limit));
+  const currentPage = Math.floor(offset / limit) + 1;
+  const [pageInput, setPageInput] = React.useState("1");
+
+  const goToPage = (page: number) => {
+    const target = Math.min(Math.max(1, Number(page) || 1), pages);
+    setOffset((target - 1) * limit);
+  };
+
+  React.useEffect(() => {
+    setPageInput(String(Math.floor(offset / limit) + 1));
+  }, [offset, limit]);
 
   return (
     <section>
@@ -91,17 +102,44 @@ export default function Videos({ notify }: { notify: Notify }) {
         {items.length === 0 && <div className="muted">没有结果</div>}
       </div>
 
-      <div className="pagination mt-3 flex gap-2 items-center">
-        <button className="btn btn-sm btn-outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>
+      <div className="pagination mt-3 flex gap-2 items-center justify-center flex-wrap">
+        <button className="btn btn-sm btn-outline" disabled={offset === 0} onClick={() => goToPage(1)}>
+          首页
+        </button>
+        <button className="btn btn-sm btn-outline" disabled={offset === 0} onClick={() => goToPage(currentPage - 1)}>
           上一页
         </button>
-        <span className="muted">第 {offset / limit + 1} / {pages} 页</span>
+        <div className="page-jump">
+          <span className="muted">第</span>
+          <input
+            className="input input-sm page-input"
+            type="number"
+            min="1"
+            max={pages}
+            value={pageInput}
+            onChange={(e) => setPageInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                goToPage(Number(pageInput));
+              }
+            }}
+            aria-label="页码"
+          />
+          <span className="muted">/ {pages} 页 · 共 {total} 条</span>
+          <button className="btn btn-sm btn-outline" onClick={() => goToPage(Number(pageInput))}>
+            跳转
+          </button>
+        </div>
         <button
           className="btn btn-sm btn-outline"
           disabled={offset + limit >= total}
-          onClick={() => setOffset(offset + limit)}
+          onClick={() => goToPage(currentPage + 1)}
         >
           下一页
+        </button>
+        <button className="btn btn-sm btn-outline" disabled={currentPage >= pages} onClick={() => goToPage(pages)}>
+          尾页
         </button>
       </div>
 
