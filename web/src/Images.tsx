@@ -23,6 +23,8 @@ export default function Images({ notify }: { notify: Notify }) {
   const [status, setStatus] = React.useState("");
   const [host, setHost] = React.useState("");
   const [batch, setBatch] = React.useState("300");
+  const [limit, setLimit] = React.useState("60");
+  const [offset, setOffset] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
 
   const load = React.useCallback(async () => {
@@ -31,12 +33,13 @@ export default function Images({ notify }: { notify: Notify }) {
       api.images({
         ...(status ? { status } : {}),
         ...(host ? { q: host } : {}),
-        limit: 60,
+        limit: Number(limit),
+        offset,
       }),
     ]);
     setStats(s);
     setImages(list);
-  }, [status, host]);
+  }, [status, host, limit, offset]);
 
   React.useEffect(() => {
     load().catch((e) => notify((e as Error).message, "error"));
@@ -167,23 +170,90 @@ export default function Images({ notify }: { notify: Notify }) {
         </select>
       </div>
 
-      <div className="image-grid mt-3">
-        {images.map((img) => (
-          <div key={img.id} className="image-tile">
-            {img.status === "downloaded" || img.status === "duplicate" ? (
-              <img src={`/images/${img.id}`} alt={img.host} loading="lazy" />
-            ) : (
-              <div className="image-placeholder">{img.status}</div>
+      <div className="image-list mt-3">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>海报</th>
+              <th>状态</th>
+              <th>域名</th>
+              <th>大小</th>
+              <th>尝试</th>
+              <th>本地路径 / 原始 URL</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {images.map((img) => (
+              <tr key={img.id}>
+                <td>
+                  {img.status === "downloaded" || img.status === "duplicate" ? (
+                    <img className="image-thumb" src={`/images/${img.id}`} alt={img.host} loading="lazy" />
+                  ) : (
+                    <div className="image-thumb image-thumb-empty">{img.status}</div>
+                  )}
+                </td>
+                <td>
+                  <span className={STATUS_BADGE[img.status] ?? "badge"}>{img.status}</span>
+                </td>
+                <td>{img.host}</td>
+                <td>{humanBytes(img.size_bytes)}</td>
+                <td>{img.attempts}</td>
+                <td className="image-path mono">
+                  {img.path || img.sha256.slice(0, 16) || "—"}
+                  {img.last_error && <span className="muted"> · {img.last_error}</span>}
+                </td>
+                <td>
+                  <a
+                    className="btn btn-sm btn-outline"
+                    href={img.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    原图
+                  </a>
+                </td>
+              </tr>
+            ))}
+            {!images.length && (
+              <tr>
+                <td colSpan={7} className="muted">
+                  没有图片记录，先运行「扫描图片 URL」。
+                </td>
+              </tr>
             )}
-            <div className="image-meta">
-              <span className={STATUS_BADGE[img.status] ?? "badge"}>{img.status}</span>
-              <span className="muted">{img.host}</span>
-              <span className="muted">{humanBytes(img.size_bytes)}</span>
-            </div>
-            <div className="image-path mono">{img.path || img.sha256.slice(0, 16) || "—"}</div>
-          </div>
-        ))}
-        {!images.length && <div className="muted">没有图片记录，先运行「扫描图片 URL」。</div>}
+          </tbody>
+        </table>
+
+        <div className="flex flex-wrap gap-2 mt-2">
+          <select
+            className="select input-bordered input-sm"
+            value={limit}
+            onChange={(e) => {
+              setLimit(e.target.value);
+              setOffset(0);
+            }}
+            title="每页显示条数"
+          >
+            <option value="20">20 条</option>
+            <option value="60">60 条</option>
+            <option value="100">100 条</option>
+            <option value="200">200 条</option>
+          </select>
+          <button className="btn btn-sm btn-outline" onClick={() => setOffset(Math.max(0, offset - Number(limit)))} disabled={offset === 0}>
+            上一页
+          </button>
+          <span className="muted">
+            第 {offset + 1}–{offset + images.length} 条（共 {stats?.total ?? 0} 条记录）
+          </span>
+          <button
+            className="btn btn-sm btn-outline"
+            onClick={() => setOffset(offset + Number(limit))}
+            disabled={offset + images.length >= (stats?.total ?? 0)}
+          >
+            下一页
+          </button>
+        </div>
       </div>
 
       {stats?.top_hosts?.length ? (
