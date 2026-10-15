@@ -1,5 +1,5 @@
 import React from "react";
-import { api, setToken, type AuthStatus, type Stats } from "./api";
+import { api, setToken, type AuthStatus, type CollectProgress, type Stats } from "./api";
 import Sources from "./Sources";
 import Videos from "./Videos";
 import Images from "./Images";
@@ -68,6 +68,7 @@ export default function App() {
   const [theme, setTheme] = React.useState(initialTheme);
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);
   const [stats, setStats] = React.useState<Stats | null>(null);
+  const [collect, setCollect] = React.useState<CollectProgress | null>(null);
 
   const notify = React.useCallback((text: string, kind: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -97,7 +98,30 @@ export default function App() {
   React.useEffect(() => {
     if (!auth || (auth.auth_required && !auth.authenticated)) return;
     refreshStats();
+    api.collectProgress().then(setCollect).catch(() => setCollect(null));
   }, [auth, refreshStats]);
+
+  // Poll the background sweep while it is running.
+  React.useEffect(() => {
+    if (!collect?.running) return;
+    const timer = setInterval(() => {
+      api
+        .collectProgress()
+        .then((state) => {
+          setCollect(state);
+          if (!state.running) {
+            notify(
+              `采集完成：新增 ${state.inserted} · 更新 ${state.updated} · ${state.done_sources} 个站点${
+                state.failed_sources ? ` · ${state.failed_sources} 个失败` : ""
+              }`
+            );
+            refreshStats();
+          }
+        })
+        .catch(() => setCollect(null));
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [collect?.running, notify, refreshStats]);
 
   if (auth && auth.auth_required && !auth.authenticated) {
     return <Login notify={notify} onDone={refreshAuth} theme={theme} setTheme={setTheme} />;
@@ -115,13 +139,16 @@ export default function App() {
   };
 
   const collectAll = () => {
+    if (collect?.running) {
+      notify("采集正在进行中，请稍候");
+      return;
+    }
     api
-      .collectAll()
-      .then((r) => {
-        notify(
-          `采集完成：新增 ${r.reduce((a, b) => a + b.inserted, 0)} · 更新 ${r.reduce((a, b) => a + b.updated, 0)} · 抓取 ${r.reduce((a, b) => a + b.pages, 0)} 页`
-        );
-        refreshStats();
+      .collectStart()
+      .then((state) => {
+        setCollect(state);
+        if (state.error) notify(`采集失败：${state.error}`, "error");
+        else notify(`采集已启动：${state.total_sources} 个站点，后台进行中`);
       })
       .catch((e) => notify((e as Error).message, "error"));
   };
@@ -147,6 +174,10 @@ export default function App() {
         : `${stats.healthy_sources}/${checked} 站点健康 · ${stats.videos} 条目`
     : "连接中…";
 
+  const collectPct = collect?.total_sources
+    ? Math.round((collect.done_sources / collect.total_sources) * 100)
+    : 0;
+
   return (
     <div className="app-shell">
       <header className="app-nav">
@@ -171,8 +202,20 @@ export default function App() {
           <span className="status-text">{statusText}</span>
         </div>
 
+        {collect?.running && (
+          <div className="nav-progress" title="采集进度">
+            <span className="progress-text">采集中 {collect.done_sources}/{collect.total_sources}</span>
+            <span className="progress-bar" aria-hidden="true">
+              <i style={{ width: `${collectPct}%` }} />
+            </span>
+            <span className="progress-count">新增 {collect.inserted} · 更新 {collect.updated}</span>
+          </div>
+        )}
+
         <div className="nav-actions">
-          <button className="btn btn-sm btn-primary" onClick={collectAll}>采集全部</button>
+          <button className="btn btn-sm btn-primary" onClick={collectAll} disabled={collect?.running}>
+            {collect?.running ? "采集中…" : "采集全部"}
+          </button>
           <button className="btn btn-sm btn-outline" onClick={checkHealth}>健康检查</button>
           <ThemePicker theme={theme} setTheme={setTheme} />
           {auth?.auth_required && (

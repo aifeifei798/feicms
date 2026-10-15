@@ -97,6 +97,18 @@ export interface CollectResult {
   elapsed_ms: number;
 }
 
+export interface CollectProgress {
+  running: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  total_sources: number;
+  done_sources: number;
+  inserted: number;
+  updated: number;
+  failed_sources: number;
+  error: string | null;
+}
+
 export interface HealthReport {
   checked: number;
   ok: number;
@@ -334,6 +346,9 @@ export const api = {
     ),
   collectAll: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
     request<CollectResult[]>("/api/collect", { method: "POST", body: JSON.stringify(body) }),
+  collectStart: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
+    request<CollectProgress>("/api/collect/start", { method: "POST", body: JSON.stringify(body) }),
+  collectProgress: () => request<CollectProgress>("/api/collect/progress"),
   healthCheck: () => request<HealthReport>("/api/health-check", { method: "POST" }),
   videos: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();

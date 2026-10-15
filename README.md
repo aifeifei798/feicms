@@ -128,6 +128,8 @@ uv run feicms subscribe --sync
 
 采集结果会打印 `采集页/总页 new= updated= skipped= total= 耗时`，并写入 `collect_jobs` 表用于审计。
 
+管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress` 显示「采集中 12/58 · 新增 …」。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
+
 数据模型：
 
 | 表 | 作用 |
@@ -223,7 +225,9 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET / PATCH / DELETE | `/api/sources/{id}` | 查看 / 修改 / 删除 |
 | POST | `/api/sources/{id}/enable` | 启用或禁用 |
 | POST | `/api/sources/{id}/collect` | 立即采集该站点（`?pages=0` 全量） |
-| POST | `/api/collect` | 采集所有启用站点 `{pages, source_ids}` |
+| POST | `/api/collect` | 采集所有启用站点 `{pages, source_ids}`（同步；后台采集运行中返回 409） |
+| POST | `/api/collect/start` | 后台启动一轮采集，立即返回进度快照 |
+| GET | `/api/collect/progress` | 后台采集进度（running / done_sources / inserted / updated / failed_sources） |
 | POST | `/api/health-check` | 探测所有站点 |
 | GET | `/api/videos` | 搜索：`q, type_name, year, source_id, sort, limit, offset` |
 | GET | `/api/videos/{id}` | 影片详情 + 全部播放源 |

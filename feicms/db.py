@@ -32,6 +32,9 @@ engine = create_async_engine(
     settings.database_url,
     echo=False,
     poolclass=NullPool if IS_SQLITE else None,
+    # sqlite default busy timeout is 5s; collection runs many concurrent writers,
+    # so wait longer instead of failing with "database is locked".
+    connect_args={"timeout": 30} if IS_SQLITE else {},
     future=True,
 )
 

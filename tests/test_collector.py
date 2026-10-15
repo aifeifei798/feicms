@@ -11,25 +11,30 @@ os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
 
 from sqlalchemy import select  # noqa: E402
 
-from feicms.collector import collect_source  # noqa: E402
+from feicms.collector import collect_all, collect_progress, collect_source, start_collect_all  # noqa: E402
 from feicms.db import init_db, session  # noqa: E402
 from feicms.fetcher import FetchResult  # noqa: E402
-from feicms.models import Source  # noqa: E402
+from feicms.models import Source, Video  # noqa: E402
 
 
 class StubClient:
     """Fake 资源站: `pagecount` pages of `per_page` items, nothing beyond that."""
 
-    def __init__(self, pagecount: int, per_page: int) -> None:
+    def __init__(self, pagecount: int, per_page: int, offset: int = 0, prefix: str = "影片", delay: float = 0.0) -> None:
         self.pagecount = pagecount
         self.per_page = per_page
+        self.offset = offset
+        self.prefix = prefix
+        self.delay = delay
 
     async def get(self, url: str) -> FetchResult:
+        if self.delay:
+            await asyncio.sleep(self.delay)
         page = int(re.search(r"pg=(\d+)", url).group(1))
         if page > self.pagecount:
             payload: dict[str, object] = {"code": 1, "list": [], "pagecount": self.pagecount, "total": self.pagecount * self.per_page}
         else:
-            start = (page - 1) * self.per_page
+            start = (page - 1) * self.per_page + self.offset
             payload = {
                 "code": 1,
                 "pagecount": self.pagecount,
@@ -37,7 +42,7 @@ class StubClient:
                 "list": [
                     {
                         "vod_id": i,
-                        "vod_name": f"影片 {i}",
+                        "vod_name": f"{self.prefix} {i}",
                         "type_name": "电影",
                         "vod_time": "2026-01-01 00:00:00",
                         "vod_play_from": "web",
@@ -101,5 +106,55 @@ def test_incremental_run_stops_when_nothing_changes():
         assert second.pages == 2
         assert second.inserted == 0
         assert second.skipped >= 20
+
+    asyncio.run(_run())
+
+
+def test_background_sweep_reports_progress():
+    async def _run() -> None:
+        src = await _make_source("后台测试站", max_pages=5)
+        state = await start_collect_all(
+            source_ids=[src.id],
+            client_factory=lambda: StubClient(pagecount=3, per_page=10),
+        )
+        assert state["running"] is True
+        assert state["total_sources"] == 1
+
+        for _ in range(200):
+            state = collect_progress()
+            if not state["running"]:
+                break
+            await asyncio.sleep(0.05)
+
+        assert state["running"] is False
+        assert state["total_sources"] == 1
+        assert state["done_sources"] == 1
+        assert state["inserted"] == 30
+        assert state["failed_sources"] == 0
+        assert state["error"] is None
+        assert state["finished_at"]
+
+    asyncio.run(_run())
+
+
+def test_concurrent_sources_merge_same_titles():
+    """Two sources collecting the same titles at once must not trip the unique
+    signature constraint (this is what made "采集全部" fail on a fresh database)."""
+
+    async def _run() -> None:
+        a = await _make_source("并发A", max_pages=1)
+        b = await _make_source("并发B", max_pages=1)
+        results = await collect_all(
+            source_ids=[a.id, b.id],
+            client_factory=lambda: StubClient(pagecount=1, per_page=10, prefix="并发影片", delay=0.2),
+        )
+        assert all(r.error is None for r in results)
+        # 20 source rows, but only 10 merged videos.
+        assert sum(r.inserted for r in results) == 20
+
+        async with session() as s:
+            videos = list(await s.scalars(select(Video).where(Video.name.like("并发影片%"))))
+        assert len(videos) == 10
+        assert all(v.source_count == 2 for v in videos)
 
     asyncio.run(_run())

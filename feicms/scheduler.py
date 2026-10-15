@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 
 from .config import settings
-from .collector import collect_all
+from .collector import collect_progress, start_collect_all
 from .db import session
 from .health import health_check_all
 from .images import download_images, scan_images
@@ -21,15 +21,16 @@ async def auto_collect_loop() -> None:
     """Background maintenance loop: periodic health checks + incremental collection."""
     while True:
         try:
-            results = await collect_all(only_enabled=True)
-            inserted = sum(r.inserted for r in results)
-            updated = sum(r.updated for r in results)
+            await start_collect_all(only_enabled=True)
+            while collect_progress()["running"]:
+                await asyncio.sleep(5)
+            state = collect_progress()
             log.info(
-                "auto collect finished: %d sources, +%d new, %d updated in %.1fs",
-                len(results),
-                inserted,
-                updated,
-                sum(r.elapsed_ms for r in results) / 1000,
+                "auto collect finished: %d sources, +%d new, %d updated, %d failed",
+                state["total_sources"],
+                state["inserted"],
+                state["updated"],
+                state["failed_sources"],
             )
         except Exception:  # noqa: BLE001
             log.exception("auto collect failed")

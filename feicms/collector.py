@@ -5,8 +5,10 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any, Callable
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -139,6 +141,41 @@ async def load_type_map(client: Fetcher, source: Source) -> dict[int, str]:
     return mapping
 
 
+async def upsert_page(
+    session_: AsyncSession,
+    source: Source,
+    items: list[VodItem],
+    type_map: dict[int, str],
+    page: int,
+    latency: float,
+) -> tuple[int, int, int, int]:
+    """Write one fetched page. Returns (inserted, updated, skipped, changes)."""
+    inserted = updated = skipped = 0
+    for item in items:
+        if not item.type_name and item.type_id:
+            item.type_name = type_map.get(item.type_id, "")
+        outcome = await upsert_item(session_, source, item)
+        if outcome == "inserted":
+            inserted += 1
+        elif outcome == "updated":
+            updated += 1
+        else:
+            skipped += 1
+
+    src = await session_.get(Source, source.id)
+    if src is not None:
+        src.last_collect_at = datetime.now(timezone.utc)
+        src.last_page = page
+        src.latency_ms = int(latency)
+        src.health_status = "ok"
+        src.fail_streak = 0
+        src.last_error = None
+        src.item_count = await session_.scalar(
+            select(func.count()).select_from(SourceItem).where(SourceItem.source_id == source.id)
+        )
+    return inserted, updated, skipped, inserted + updated
+
+
 async def collect_source(
     source: Source,
     pages: int | None = None,
@@ -192,35 +229,23 @@ async def collect_source(
                 result.error = f"page {page} returned no items (HTTP {response.status_code})"
                 break
 
-            status = response.status_code
-            latency = response.latency_ms
-
             page_changes = 0
-            async with session() as s:
-                for item in items:
-                    if not item.type_name and item.type_id:
-                        item.type_name = type_map.get(item.type_id, "")
-                    outcome = await upsert_item(s, source, item)
-                    if outcome == "inserted":
-                        result.inserted += 1
-                        page_changes += 1
-                    elif outcome == "updated":
-                        result.updated += 1
-                        page_changes += 1
-                    else:
-                        result.skipped += 1
-
-                src = await s.get(Source, source.id)
-                if src is not None:
-                    src.last_collect_at = datetime.now(timezone.utc)
-                    src.last_page = page
-                    src.latency_ms = int(latency)
-                    src.health_status = "ok"
-                    src.fail_streak = 0
-                    src.last_error = None
-                    src.item_count = await s.scalar(
-                        select(func.count()).select_from(SourceItem).where(SourceItem.source_id == source.id)
-                    )
+            for attempt in range(3):
+                try:
+                    async with session() as s:
+                        inserted, updated, skipped, page_changes = await upsert_page(
+                            s, source, items, type_map, page, response.latency_ms
+                        )
+                    result.inserted += inserted
+                    result.updated += updated
+                    result.skipped += skipped
+                    break
+                except IntegrityError:
+                    # Two sources created the same title at the same time: the
+                    # transaction was rolled back, so replay the page.
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(0.15 * (attempt + 1))
 
             result.pages = page
             if stop_on_no_change and page_changes == 0 and page > 1:
@@ -260,31 +285,119 @@ async def collect_source(
     return result
 
 
+async def _select_sources(
+    s: AsyncSession,
+    names: list[str] | None = None,
+    only_enabled: bool = True,
+    source_ids: list[int] | None = None,
+) -> list[Source]:
+    stmt = select(Source)
+    if only_enabled:
+        stmt = stmt.where(Source.enabled)
+    if names:
+        stmt = stmt.where(Source.name.in_(names))
+    if source_ids:
+        stmt = stmt.where(Source.id.in_(source_ids))
+    return list(await s.scalars(stmt.order_by(Source.priority.desc(), Source.id)))
+
+
 async def collect_all(
     names: list[str] | None = None,
     pages: int | None = None,
     only_enabled: bool = True,
     source_ids: list[int] | None = None,
+    on_result: Callable[[CollectResult], None] | None = None,
+    client_factory: Callable[[], Fetcher] | None = None,
 ) -> list[CollectResult]:
     async with session() as s:
-        stmt = select(Source)
-        if only_enabled:
-            stmt = stmt.where(Source.enabled)
-        if names:
-            stmt = stmt.where(Source.name.in_(names))
-        if source_ids:
-            stmt = stmt.where(Source.id.in_(source_ids))
-        sources = list(await s.scalars(stmt.order_by(Source.priority.desc(), Source.id)))
+        sources = await _select_sources(s, names, only_enabled, source_ids)
 
-    results: list[CollectResult] = []
     sem = asyncio.Semaphore(settings.concurrency)
 
     async def run(src: Source) -> CollectResult:
         async with sem:
-            return await collect_source(src, pages=pages)
+            client = client_factory() if client_factory is not None else None
+            result = await collect_source(src, pages=pages, client=client)
+            if on_result is not None:
+                on_result(result)
+            return result
 
-    results = await asyncio.gather(*(run(src) for src in sources))
-    return results
+    return await asyncio.gather(*(run(src) for src in sources))
+
+
+# ---------------------------------------------------------------- background sweeps
+# A single in-process state so the panel can show live progress and the scheduler
+# never runs two sweeps at the same time (SQLite would just lock up).
+_collect_state: dict[str, Any] = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "total_sources": 0,
+    "done_sources": 0,
+    "inserted": 0,
+    "updated": 0,
+    "failed_sources": 0,
+    "error": None,
+}
+
+
+def collect_progress() -> dict[str, Any]:
+    """Snapshot of the current (or last) collection sweep."""
+    return dict(_collect_state)
+
+
+async def start_collect_all(
+    names: list[str] | None = None,
+    pages: int | None = None,
+    only_enabled: bool = True,
+    source_ids: list[int] | None = None,
+    client_factory: Callable[[], Fetcher] | None = None,
+) -> dict[str, Any]:
+    """Kick off a collection sweep in the background and return its progress state."""
+    if _collect_state["running"]:
+        return dict(_collect_state)
+
+    async def count() -> int:
+        async with session() as s:
+            return len(await _select_sources(s, names, only_enabled, source_ids))
+
+    def on_result(result: CollectResult) -> None:
+        _collect_state["done_sources"] += 1
+        _collect_state["inserted"] += result.inserted
+        _collect_state["updated"] += result.updated
+        if result.error:
+            _collect_state["failed_sources"] += 1
+
+    async def runner() -> None:
+        try:
+            await collect_all(
+                names,
+                pages,
+                only_enabled,
+                source_ids,
+                on_result=on_result,
+                client_factory=client_factory,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _collect_state["error"] = str(exc)
+        finally:
+            _collect_state["running"] = False
+            _collect_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+    total = await count()
+    _collect_state.update(
+        running=True,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        finished_at=None,
+        total_sources=total,
+        done_sources=0,
+        inserted=0,
+        updated=0,
+        failed_sources=0,
+        error=None,
+    )
+    asyncio.create_task(runner())
+    return dict(_collect_state)
 
 
 async def repair_plays() -> dict[str, int]:

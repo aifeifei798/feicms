@@ -96,6 +96,31 @@ body {
   background: var(--color-error);
 }
 
+.nav-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.progress-bar {
+  width: 96px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--brand) 20%, transparent);
+  overflow: hidden;
+}
+.progress-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand);
+  transition: width 0.4s ease;
+}
+.progress-count {
+  color: var(--text-dim);
+}
+
 .nav-actions {
   display: flex;
   align-items: center;
@@ -179,6 +204,7 @@ body {
 @media (max-width: 1000px) {
   .brand-sub,
   .nav-status,
+  .nav-progress,
   .nav-divider {
     display: none;
   }

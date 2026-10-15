@@ -17,7 +17,7 @@ from .auth import (
     require_admin,
     require_auth,
 )
-from .collector import collect_all, collect_source, repair_plays
+from .collector import collect_all, collect_progress, collect_source, repair_plays, start_collect_all
 from .config import settings
 from .db import session
 from .health import health_check_all
@@ -219,6 +219,8 @@ async def collect_one(
 
 @router.post("/collect")
 async def collect_many(payload: CollectRequest) -> list[dict[str, Any]]:
+    if collect_progress()["running"]:
+        raise HTTPException(409, "采集正在进行中，请先等待或查看 /api/collect/progress")
     results = await collect_all(
         names=payload.names,
         pages=payload.pages,
@@ -240,6 +242,23 @@ async def collect_many(payload: CollectRequest) -> list[dict[str, Any]]:
         }
         for r in results
     ]
+
+
+@router.post("/collect/start")
+async def collect_start(payload: CollectRequest) -> dict[str, Any]:
+    """Start a sweep in the background; poll /api/collect/progress for live status."""
+    return await start_collect_all(
+        names=payload.names,
+        pages=payload.pages,
+        only_enabled=not payload.all,
+        source_ids=payload.source_ids,
+    )
+
+
+@router.get("/collect/progress")
+async def collect_status() -> dict[str, Any]:
+    """Progress of the current (or most recent) collection sweep."""
+    return collect_progress()
 
 
 @router.post("/health-check", response_model=HealthReport)

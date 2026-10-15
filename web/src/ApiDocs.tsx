@@ -206,9 +206,29 @@ const GROUPS: Group[] = [
       {
         method: "POST",
         path: "/api/collect",
-        summary: "批量采集（默认只采集启用的源）",
+        summary: "批量采集（同步等待，返回每源统计）。若后台采集正在运行则返回 409",
         body: `{ "names": ["如意资源站", "白嫖资源站"], "pages": 3, "all": false }`,
         example: "curl -X POST http://127.0.0.1:8000/api/collect -H 'Content-Type: application/json' -d '{\"pages\":2}'",
+      },
+      {
+        method: "POST",
+        path: "/api/collect/start",
+        summary: "在后台启动一次全量采集，立即返回进度快照（UI 的「采集全部」使用这个）",
+        body: `{ "names": [], "pages": null, "all": false }`,
+        params: [
+          {
+            name: "pages",
+            type: "int",
+            note: "省略 = 每站 max_pages；>0 = 指定页数；0 = 全量遍历所有页",
+          },
+        ],
+        example: "curl -X POST http://127.0.0.1:8000/api/collect/start -H 'Content-Type: application/json' -d '{}'",
+      },
+      {
+        method: "GET",
+        path: "/api/collect/progress",
+        summary: "查看后台采集进度：running / total_sources / done_sources / inserted / updated / failed_sources",
+        example: "curl http://127.0.0.1:8000/api/collect/progress",
       },
       {
         method: "POST",
