@@ -302,6 +302,8 @@ cmd_full() {
   for a in "$@"; do
     args="$args $(printf '%q' "$a")"
   done
+  # a new sweep starts a fresh log; the live numbers live in $COLLECT_STATUS
+  : > "$COLLECT_LOG"
   if command -v setsid >/dev/null 2>&1; then
     PYTHONUNBUFFERED=1 setsid nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
   else
@@ -340,6 +342,7 @@ except Exception as exc:
     print(f"状态文件读取失败: {exc}")
     raise SystemExit(0)
 
+print(f"本轮开始: {d.get('started_at', '?')}  最近更新: {d.get('updated_at', '?')}")
 print(f"进度: {d.get('done_sources', 0)}/{d.get('total_sources', 0)} 个站点完成，"
       f"共 {d.get('pages', 0)} 页，新增 {d.get('inserted', 0)}，更新 {d.get('updated', 0)}，"
       f"跳过 {d.get('skipped', 0)} 条重复")
@@ -353,8 +356,7 @@ if sources:
     if len(sources) > 25:
         print(f"  ... 其余 {len(sources) - 25} 个站点见 {sys.argv[1]}")
 PY
-  fi
-  if [ -f "$COLLECT_LOG" ]; then
+  elif [ -f "$COLLECT_LOG" ]; then
     echo "最近 20 行 ($COLLECT_LOG):"
     tail -20 "$COLLECT_LOG"
   fi
