@@ -17,7 +17,14 @@ from .auth import (
     require_admin,
     require_auth,
 )
-from .collector import collect_all, collect_progress, collect_source, repair_plays, start_collect_all
+from .collector import (
+    collect_all,
+    collect_progress,
+    collect_source,
+    merge_duplicates,
+    repair_plays,
+    start_collect_all,
+)
 from .config import settings
 from .db import session
 from .health import health_check_all
@@ -640,6 +647,15 @@ async def prune() -> dict[str, int]:
 async def repair_plays_endpoint() -> dict[str, int]:
     """Re-parse stored `play_from` / `play_url` into structured play sources."""
     return await repair_plays()
+
+
+@router.post("/merge-duplicates")
+async def merge_duplicates_endpoint(dry_run: bool = False) -> dict[str, Any]:
+    """Merge videos that share the same normalised title.
+
+    `?dry_run=true` only reports how many groups would be merged.
+    """
+    return await merge_duplicates(dry_run=dry_run)
 
 
 @router.get("/jobs")

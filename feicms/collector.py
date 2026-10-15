@@ -3,18 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .fetcher import Fetcher, build_query, fetch
-from .models import CollectJob, Source, SourceItem, SourceType, Video
-from .normalizer import VodItem, clean_text, parse_play_url, parse_raw_items, parse_response
+from .models import CollectJob, Image, Source, SourceItem, SourceType, Video
+from .normalizer import VodItem, build_signature, clean_text, parse_play_url, parse_raw_items, parse_response
 from .db import session
 
 
@@ -398,6 +399,121 @@ async def start_collect_all(
     )
     asyncio.create_task(runner())
     return dict(_collect_state)
+
+
+async def merge_duplicates(dry_run: bool = False) -> dict[str, Any]:
+    """Merge videos that share the same normalised title.
+
+    Older records were keyed by `title|year`, so the same show could end up as
+    two rows. Titles are re-keyed with the current `build_signature()` and every
+    duplicate's `source_items` (and therefore its play sources) are re-attached
+    to the richest surviving row.
+    """
+    async with session() as s:
+        videos = list(await s.scalars(select(Video).order_by(Video.id)))
+        counts = {
+            row[0]: row[1]
+            for row in await s.execute(
+                select(SourceItem.video_id, func.count()).group_by(SourceItem.video_id)
+            )
+        }
+
+        groups: dict[str, list[Video]] = defaultdict(list)
+        for video in videos:
+            groups[build_signature(video.name)].append(video)
+
+        merged_groups = 0
+        removed = 0
+        moved_items = 0
+        fixed = 0
+        examples: list[dict[str, Any]] = []
+
+        for signature, group in groups.items():
+            if len(group) < 2:
+                # Legacy `title|year` signature on a single row: re-key it so a
+                # later collection of the same title merges instead of duplicating.
+                if group[0].signature != signature:
+                    group[0].signature = signature
+                    fixed += 1
+                continue
+            merged_groups += 1
+
+            def richness(v: Video) -> tuple[int, int, int]:
+                return (
+                    counts.get(v.id, 0),
+                    1 if v.blurb else 0,
+                    1 if v.pic else 0,
+                )
+
+            keeper = max(group, key=lambda v: (richness(v), -v.id))
+            others = [v for v in group if v.id != keeper.id]
+            removed += len(others)
+            moved_items += sum(counts.get(v.id, 0) for v in others)
+
+            if dry_run:
+                if len(examples) < 20:
+                    examples.append(
+                        {
+                            "signature": signature,
+                            "name": keeper.name,
+                            "keep": keeper.id,
+                            "merge": [v.id for v in others],
+                        }
+                    )
+                continue
+
+            for dup in others:
+                await s.execute(
+                    update(SourceItem).where(SourceItem.video_id == dup.id).values(video_id=keeper.id)
+                )
+                await s.execute(update(Image).where(Image.video_id == dup.id).values(video_id=keeper.id))
+
+                for field_name in (
+                    "type_name",
+                    "type_id",
+                    "year",
+                    "area",
+                    "lang",
+                    "category",
+                    "pic",
+                    "blurb",
+                    "actor",
+                    "director",
+                    "remarks",
+                ):
+                    if not (getattr(keeper, field_name) or ""):
+                        value = getattr(dup, field_name) or ""
+                        if value:
+                            setattr(keeper, field_name, value)
+
+                if dup.first_seen < keeper.first_seen:
+                    keeper.first_seen = dup.first_seen
+                if dup.last_updated > keeper.last_updated:
+                    keeper.last_updated = dup.last_updated
+
+                await s.execute(delete(Video).where(Video.id == dup.id))
+
+            keeper.signature = signature
+            keeper.source_count = int(
+                await s.scalar(
+                    select(func.count(func.distinct(SourceItem.source_id))).where(
+                        SourceItem.video_id == keeper.id
+                    )
+                )
+                or 0
+            )
+
+        if not dry_run:
+            await s.commit()
+
+    return {
+        "groups": merged_groups,
+        "removed": removed,
+        "moved_items": moved_items,
+        "fixed_signatures": fixed,
+        "dry_run": dry_run,
+        "examples": examples,
+    }
 
 
 async def repair_plays() -> dict[str, int]:

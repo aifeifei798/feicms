@@ -63,7 +63,11 @@ function Icon({ name }: { name: View }) {
 }
 
 export default function App() {
-  const [view, setView] = React.useState<View>("dashboard");
+  const initialView: View = (() => {
+    const requested = new URLSearchParams(window.location.search).get("view");
+    return NAV.some((item) => item.key === requested) ? (requested as View) : "dashboard";
+  })();
+  const [view, setView] = React.useState<View>(initialView);
   const [toasts, setToasts] = React.useState<{ id: number; text: string; kind: "success" | "error" }[]>([]);
   const [theme, setTheme] = React.useState(initialTheme);
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);

@@ -109,6 +109,15 @@ export interface CollectProgress {
   error: string | null;
 }
 
+export interface MergeResult {
+  groups: number;
+  removed: number;
+  moved_items: number;
+  fixed_signatures: number;
+  dry_run: boolean;
+  examples: { signature: string; name: string; keep: number; merge: number[] }[];
+}
+
 export interface HealthReport {
   checked: number;
   ok: number;
@@ -357,6 +366,9 @@ export const api = {
   video: (id: number) => request<Video>(`/api/videos/${id}`),
   videoSources: (id: number) => request<{ source_id: number; source_name: string; source_vod_id: number; play_from: string; vod_time: string; episodes: { from: string; episodes: Episode[] }[] }[]>(`/api/videos/${id}/sources`),
   prune: () => request<{ removed: number }>("/api/prune", { method: "POST" }),
+  repairPlays: () => request<{ total: number; changed: number; videos: number }>("/api/repair-plays", { method: "POST" }),
+  mergeDuplicates: (dryRun = false) =>
+    request<MergeResult>(`/api/merge-duplicates?dry_run=${dryRun}`, { method: "POST" }),
   subscriptions: () => request<Subscription[]>("/api/subscriptions"),
   createSubscription: (body: { url: string; kind?: string; enabled?: boolean }) =>
     request<Subscription>("/api/subscriptions", { method: "POST", body: JSON.stringify(body) }),

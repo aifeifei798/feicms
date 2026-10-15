@@ -11,10 +11,16 @@ os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
 
 from sqlalchemy import select  # noqa: E402
 
-from feicms.collector import collect_all, collect_progress, collect_source, start_collect_all  # noqa: E402
+from feicms.collector import (  # noqa: E402
+    collect_all,
+    collect_progress,
+    collect_source,
+    merge_duplicates,
+    start_collect_all,
+)
 from feicms.db import init_db, session  # noqa: E402
 from feicms.fetcher import FetchResult  # noqa: E402
-from feicms.models import Source, Video  # noqa: E402
+from feicms.models import Source, SourceItem, Video  # noqa: E402
 
 
 class StubClient:
@@ -156,5 +162,69 @@ def test_concurrent_sources_merge_same_titles():
             videos = list(await s.scalars(select(Video).where(Video.name.like("并发影片%"))))
         assert len(videos) == 10
         assert all(v.source_count == 2 for v in videos)
+
+    asyncio.run(_run())
+
+
+def test_merge_duplicates_keeps_plays_and_metadata():
+    """Legacy `title|year` signatures split one show into two rows; merging must
+    move the source records (and their play sources) to the richest row."""
+
+    async def _run() -> None:
+        a = await _make_source("合并A", max_pages=1)
+        b = await _make_source("合并B", max_pages=1)
+
+        async with session() as s:
+            legacy = Video(name="合并测试影片", signature="合并测试影片|2024", source_count=1)
+            modern = Video(
+                name="合并测试影片",
+                signature="合并测试影片",
+                blurb="完整简介",
+                year="2024",
+                source_count=1,
+            )
+            s.add_all([legacy, modern])
+            await s.flush()
+            s.add(
+                SourceItem(
+                    source_id=a.id,
+                    video_id=legacy.id,
+                    source_vod_id=9001,
+                    name="合并测试影片",
+                    plays=json.dumps(
+                        [{"from": "lineA", "episodes": [{"name": "第1集", "url": "https://a.example/1"}]}]
+                    ),
+                )
+            )
+            s.add(
+                SourceItem(
+                    source_id=b.id,
+                    video_id=modern.id,
+                    source_vod_id=9002,
+                    name="合并测试影片",
+                    plays=json.dumps(
+                        [{"from": "lineB", "episodes": [{"name": "第1集", "url": "https://b.example/1"}]}]
+                    ),
+                )
+            )
+            await s.commit()
+
+        preview = await merge_duplicates(dry_run=True)
+        assert preview["groups"] >= 1 and preview["removed"] >= 1
+
+        result = await merge_duplicates()
+        assert result["removed"] >= 1 and result["moved_items"] >= 1
+
+        async with session() as s:
+            videos = list(await s.scalars(select(Video).where(Video.name == "合并测试影片")))
+            assert len(videos) == 1
+            keeper = videos[0]
+            assert keeper.signature == "合并测试影片"
+            assert keeper.source_count == 2
+            assert keeper.blurb == "完整简介"
+
+            items = list(await s.scalars(select(SourceItem).where(SourceItem.video_id == keeper.id)))
+            assert len(items) == 2
+            assert {i.source_id for i in items} == {a.id, b.id}
 
     asyncio.run(_run())

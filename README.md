@@ -130,6 +130,8 @@ uv run feicms subscribe --sync
 
 管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress` 显示「采集中 12/58 · 新增 …」。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
 
+同一影片在不同站点标题略有差异（例如带年份 `月亮求抱抱|2026`），旧数据里可能被拆成两条 `videos`。`feicms merge-duplicates`（或面板「配置 → 数据维护 → 合并重复影片」）会把标题归一化后合并成一条：重复行的采集记录（含全部播放源）迁移到最完整的那条，海报索引重新指向，旧 `signature` 重键，重复行删除。`--dry-run` / `?dry_run=true` 只统计并给出示例，不改动数据。
+
 数据模型：
 
 | 表 | 作用 |
@@ -158,6 +160,7 @@ feicms health                      # 探测所有启用站点
 feicms stats                       # 统计
 feicms prune                       # 删除无播放源记录 / 孤儿影片
 feicms repair-plays                # 用当前解析规则重建播放源结构 + 清理文本字段（不联网）
+feicms merge-duplicates [--dry-run] # 合并同标题的重复影片（旧 signature 带年份造成的拆分）
 feicms export [--out backup.jsonl]
 
 feicms images scan                 # 登记所有 pic 字段（不联网）
@@ -248,6 +251,8 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | POST | `/api/images/repair` | 校对索引与磁盘 |
 | GET | `/images/{id}` | 返回本地图片文件，未下载则 302 到原 URL |
 | POST | `/api/prune` | 清理无播放源记录 / 孤儿影片 |
+| POST | `/api/repair-plays` | 用当前解析规则重建播放源结构（不联网） |
+| POST | `/api/merge-duplicates` | 合并同标题的重复影片（`?dry_run=true` 只统计） |
 | GET | `/provide/vod` | 兼容资源站格式，可被下游 CMS 直接采集 |
 | GET / POST | `/mcp` | MCP server（JSON-RPC：`initialize` / `tools/list` / `tools/call`） |
 | GET | `/docs` · `/openapi.json` | OpenAPI 文档 |

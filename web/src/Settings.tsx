@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type Config } from "./api";
+import { api, type Config, type MergeResult } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -29,6 +29,8 @@ FEICMS_PORT=8000`;
 
 export default function Settings({ notify }: { notify: Notify }) {
   const [config, setConfig] = React.useState<Config | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [mergePreview, setMergePreview] = React.useState<MergeResult | null>(null);
 
   React.useEffect(() => {
     api.config().then(setConfig).catch((e) => notify((e as Error).message, "error"));
@@ -40,6 +42,45 @@ export default function Settings({ notify }: { notify: Notify }) {
       notify(`清理 ${r.removed} 条无播放源记录`);
     } catch (e) {
       notify((e as Error).message, "error");
+    }
+  };
+
+  const repairPlays = async () => {
+    setBusy(true);
+    try {
+      const r = await api.repairPlays();
+      notify(`重建 ${r.changed} 条播放源（共 ${r.total} 条原始记录）`);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const previewMerge = async () => {
+    try {
+      const r = await api.mergeDuplicates(true);
+      setMergePreview(r);
+      notify(
+        r.groups
+          ? `发现 ${r.groups} 组重复标题，涉及 ${r.removed} 条（另有 ${r.fixed_signatures} 条旧 signature 需重键）`
+          : "没有重复标题"
+      );
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
+
+  const mergeDuplicates = async () => {
+    setBusy(true);
+    try {
+      const r = await api.mergeDuplicates(false);
+      setMergePreview(null);
+      notify(`合并 ${r.groups} 组 · 删除 ${r.removed} 条重复影片 · 迁移 ${r.moved_items} 条原始记录`);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -98,14 +139,60 @@ export default function Settings({ notify }: { notify: Notify }) {
           <div className="card-body">
             <h2 className="card-title">.env 模板</h2>
             <pre className="mono bg-base-200 rounded-box p-3 whitespace-pre-wrap">{ENV_TEMPLATE}</pre>
-            <div className="mt-3 flex gap-2">
-              <button className="btn btn-sm btn-outline" onClick={prune}>清理无播放源记录</button>
-            </div>
             <p className="muted mt-2">改完 .env 后重启服务生效：uv run feicms serve</p>
             <p className="muted mt-1">
               对外 API key 与 MCP 接入在左侧「AI / MCP 接入」页面管理。
             </p>
           </div>
+        </div>
+      </div>
+
+      <div className="card bg-base-100 border border-base-300 mt-3">
+        <div className="card-body">
+          <h2 className="card-title">数据维护</h2>
+          <p className="muted">
+            跨站点合并按标题归一化（去掉标点与空格）。旧数据里 signature 带年份，同一影片可能被拆成多条；
+            下面的工具会把它们合并成一条，播放源全部保留。
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn btn-sm btn-outline" onClick={previewMerge} disabled={busy}>
+              检查重复影片
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={mergeDuplicates} disabled={busy}>
+              {busy ? "处理中…" : "合并重复影片"}
+            </button>
+            <button className="btn btn-sm btn-outline" onClick={repairPlays} disabled={busy}>
+              重建播放源
+            </button>
+            <button className="btn btn-sm btn-outline" onClick={prune} disabled={busy}>
+              清理无播放源记录
+            </button>
+          </div>
+          {mergePreview && (
+            <div className="mt-3">
+              <p className="muted">
+                共 {mergePreview.groups} 组重复标题（合并后删除 {mergePreview.removed} 条）。示例：
+              </p>
+              <table className="table mt-1">
+                <thead>
+                  <tr>
+                    <th>影片</th>
+                    <th>保留</th>
+                    <th>合并进</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mergePreview.examples.map((ex) => (
+                    <tr key={ex.keep}>
+                      <td>{ex.name}</td>
+                      <td className="mono">#{ex.keep}</td>
+                      <td className="mono">{ex.merge.map((id) => `#${id}`).join(" ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 

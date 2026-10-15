@@ -274,6 +274,32 @@ def repair_plays_cmd() -> None:
     asyncio.run(_run())
 
 
+@app.command("merge-duplicates")
+def merge_duplicates_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="只统计，不合并"),
+) -> None:
+    """合并同标题的重复影片（旧 signature 带年份导致同一影片拆成多条）。"""
+    from .collector import merge_duplicates
+
+    async def _run() -> None:
+        await init_db()
+        result = await merge_duplicates(dry_run=dry_run)
+        if dry_run:
+            console.print(
+                f"[yellow]发现 {result['groups']} 组重复标题，将合并 {result['removed']} 条"
+                f"（另有 {result['fixed_signatures']} 条旧 signature 需要重键）[/yellow]"
+            )
+            for ex in result["examples"]:
+                console.print(f"  {ex['name']} → 保留 {ex['keep']}，合并 {ex['merge']}")
+        else:
+            console.print(
+                f"[green]合并 {result['groups']} 组[/green] · 删除 {result['removed']} 条重复影片"
+                f" · 迁移 {result['moved_items']} 条原始记录 · 重键 {result['fixed_signatures']} 条 signature"
+            )
+
+    asyncio.run(_run())
+
+
 @app.command("add")
 def add_source(
     name: str,

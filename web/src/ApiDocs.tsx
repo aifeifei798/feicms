@@ -424,6 +424,13 @@ const GROUPS: Group[] = [
         summary: "用当前解析规则重建播放源结构（单集 / 多集）并清理文本字段，不重新采集",
         example: "curl -X POST http://127.0.0.1:8000/api/repair-plays",
       },
+      {
+        method: "POST",
+        path: "/api/merge-duplicates",
+        summary: "合并同标题的重复影片：把重复行的采集记录（含播放源）迁移到最完整的一条，再删除重复行",
+        params: [{ name: "dry_run", type: "bool", default: "false", note: "true 只统计并返回示例，不改动数据" }],
+        example: "curl -X POST 'http://127.0.0.1:8000/api/merge-duplicates?dry_run=true'",
+      },
     ],
   },
   {

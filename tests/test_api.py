@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -143,3 +144,49 @@ def test_prune_removes_empty_and_orphan_records():
     result = client.post("/api/prune").json()
     assert result["removed"] >= 1
     assert client.get("/api/videos", params={"q": "孤儿"}).json()["total"] == 0
+
+
+def test_merge_duplicates_endpoint():
+    import asyncio
+
+    async def _make_duplicates() -> None:
+        async with session() as s:
+            src = await s.scalar(select(Source).where(Source.name == "测试站"))
+            legacy = Video(name="合并影片", signature="合并影片|2023")
+            modern = Video(name="合并影片", signature=build_signature("合并影片"), blurb="完整简介")
+            s.add_all([legacy, modern])
+            await s.flush()
+            for vod_id, video_id in ((1234, legacy.id), (1235, modern.id)):
+                s.add(
+                    SourceItem(
+                        source_id=src.id,
+                        video_id=video_id,
+                        source_vod_id=vod_id,
+                        name="合并影片",
+                        play_from="test",
+                        play_url="正片$https://v/%d.mp4" % vod_id,
+                        plays=json.dumps(
+                            [{"from": "test", "episodes": [{"name": "正片", "url": "https://v/%d.mp4" % vod_id}]}]
+                        ),
+                    )
+                )
+
+    asyncio.run(_make_duplicates())
+
+    preview = client.post("/api/merge-duplicates", params={"dry_run": True}).json()
+    assert preview["dry_run"] is True and preview["groups"] >= 1
+
+    result = client.post("/api/merge-duplicates").json()
+    assert result["removed"] >= 1 and result["moved_items"] >= 1
+
+    async def _check() -> None:
+        async with session() as s:
+            videos = list(await s.scalars(select(Video).where(Video.name == "合并影片")))
+            assert len(videos) == 1
+            keeper = videos[0]
+            assert keeper.signature == build_signature("合并影片")
+            assert keeper.blurb == "完整简介"
+            items = list(await s.scalars(select(SourceItem).where(SourceItem.video_id == keeper.id)))
+            assert len(items) == 2
+
+    asyncio.run(_check())
