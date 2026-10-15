@@ -1,9 +1,9 @@
 import React from "react";
 import { siteApi, type SiteFilters, type SiteStats, type Video, type VideoSummary } from "../api";
+import { POSTER_PLACEHOLDER, posterFallback } from "../poster";
 import Player from "./Player";
 
 const PAGE_SIZE = 24;
-
 
 type Route = { view: "home" } | { view: "video"; id: number };
 
@@ -18,20 +18,16 @@ function posterUrl(item: VideoSummary | Video): string {
 }
 
 /** Poster with a graceful fallback: remote hotlinks often 403, so a broken image
- * never leaves an empty hole in the grid. */
+ * is replaced by the feicms mark instead of an empty frame. */
 function Poster({ item, className = "" }: { item: VideoSummary | Video; className?: string }) {
-  const url = posterUrl(item);
   return (
     <div className={`poster-frame ${className}`}>
-      {url ? (
-        <img
-          src={url}
-          alt={item.name}
-          loading="lazy"
-          onError={(e) => e.currentTarget.classList.add("poster-failed")}
-        />
-      ) : null}
-      <span className="poster-fallback">{item.name}</span>
+      <img
+        src={posterUrl(item) || POSTER_PLACEHOLDER}
+        alt={item.name}
+        loading="lazy"
+        onError={posterFallback}
+      />
     </div>
   );
 }

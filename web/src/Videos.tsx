@@ -1,5 +1,6 @@
 import React from "react";
 import { api, type Video, type VideoSummary } from "./api";
+import { POSTER_PLACEHOLDER, posterFallback } from "./poster";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -74,13 +75,12 @@ export default function Videos({ notify }: { notify: Notify }) {
       <div className="video-grid">
         {items.map((v) => (
           <div className="video-card" key={v.id} onClick={() => open(v.id)}>
-            {v.local_pic ? (
-              <img src={v.local_pic} alt={v.name} loading="lazy" />
-            ) : v.pic ? (
-              <img src={v.pic} alt={v.name} loading="lazy" />
-            ) : (
-              <div className="bar" />
-            )}
+            <img
+              src={v.local_pic || v.pic || POSTER_PLACEHOLDER}
+              alt={v.name}
+              loading="lazy"
+              onError={posterFallback}
+            />
             <div className="font-semibold mt-2">{v.name}</div>
             <div className="muted">
               {v.type_name || "未分类"} · {v.year || "-"} · {v.source_count} 来源
@@ -120,6 +120,7 @@ export default function Videos({ notify }: { notify: Notify }) {
                   <img
                     src={detail.local_pic || detail.pic}
                     alt={detail.name}
+                    onError={posterFallback}
                     style={{ width: 160, height: 100, objectFit: "cover", borderRadius: "0.5rem" }}
                   />
                   <span className="muted">{detail.local_pic ? "海报已本地化" : "海报未下载（外链）"}</span>

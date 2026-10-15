@@ -1,5 +1,6 @@
 import React from "react";
 import { api, type DownloadProgress, type ImageLayout, type ImageRecord, type ImageStats } from "./api";
+import { posterFallback } from "./poster";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -301,7 +302,7 @@ export default function Images({ notify }: { notify: Notify }) {
               <tr key={img.id}>
                 <td>
                   {img.status === "downloaded" || img.status === "duplicate" ? (
-                    <img className="image-thumb" src={`/images/${img.id}`} alt={img.host} loading="lazy" />
+                    <img className="image-thumb" src={`/images/${img.id}`} alt={img.host} loading="lazy" onError={posterFallback} />
                   ) : (
                     <div className="image-thumb image-thumb-empty">{img.status}</div>
                   )}
