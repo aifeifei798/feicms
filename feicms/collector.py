@@ -19,7 +19,7 @@ from .config import settings
 from .fetcher import Fetcher, build_query, fetch
 from .models import CollectJob, Image, Source, SourceItem, SourceType, Video
 from .normalizer import VodItem, build_signature, clean_text, parse_play_url, parse_raw_items, parse_response
-from .db import session
+from .db import IS_SQLITE, session
 
 log = logging.getLogger("feicms.collector")
 
@@ -109,40 +109,45 @@ async def get_source(session_, source_id: int | None = None, name: str | None = 
     return None
 
 
-async def upsert_item(session_: AsyncSession, source: Source, item: VodItem) -> str:
-    """Merge one fetched record into the database. Returns inserted|updated|skipped."""
-    stmt = select(SourceItem).where(SourceItem.source_id == source.id, SourceItem.source_vod_id == item.vod_id)
-    existing = await session_.scalar(stmt)
+async def upsert_page(
+    session_: AsyncSession,
+    source: Source,
+    items: list[VodItem],
+    type_map: dict[int, str],
+) -> tuple[int, int, int, int]:
+    """Write one fetched page in bulk. Returns (inserted, updated, skipped, changes).
 
-    video = await session_.scalar(select(Video).where(Video.signature == item.signature))
-    if video is None:
-        video = Video(
-            name=item.name,
-            signature=item.signature,
-            type_name=item.type_name,
-            type_id=item.type_id,
-            year=item.year,
-            area=item.area,
-            lang=item.lang,
-            pic=item.pic,
-            blurb=item.blurb,
-            actor=item.actor,
-            director=item.director,
-            remarks=item.remarks,
-            source_count=0,
+    Two key lookups per page (existing videos by signature, existing items by
+    (source_id, vod_id)) instead of two SELECTs per item: a full sweep of 73
+    sources would otherwise spend hundreds of thousands of round trips just
+    checking whether a row already exists.
+    """
+    for item in items:
+        if not item.type_name and item.type_id:
+            item.type_name = type_map.get(item.type_id, "")
+
+    signatures = {item.signature for item in items}
+    videos_by_sig = {
+        video.signature: video
+        for video in await session_.scalars(select(Video).where(Video.signature.in_(signatures)))
+    }
+    vod_ids = [item.vod_id for item in items]
+    items_by_key = {
+        row.source_vod_id: row
+        for row in await session_.scalars(
+            select(SourceItem).where(
+                SourceItem.source_id == source.id,
+                SourceItem.source_vod_id.in_(vod_ids),
+            )
         )
-        session_.add(video)
-        await session_.flush()
+    }
 
-    plays_json = json.dumps([p.as_dict() for p in item.plays], ensure_ascii=False)
-
-    if existing is None:
-        session_.add(
-            SourceItem(
-                source_id=source.id,
-                video_id=video.id,
-                source_vod_id=item.vod_id,
+    # Create missing videos first so every SourceItem can reference a flushed id.
+    for item in items:
+        if item.signature not in videos_by_sig:
+            video = Video(
                 name=item.name,
+                signature=item.signature,
                 type_name=item.type_name,
                 type_id=item.type_id,
                 year=item.year,
@@ -153,42 +158,84 @@ async def upsert_item(session_: AsyncSession, source: Source, item: VodItem) -> 
                 actor=item.actor,
                 director=item.director,
                 remarks=item.remarks,
-                vod_time=item.vod_time,
-                play_from=item.play_from,
-                play_url=item.play_url,
-                plays=plays_json,
+                source_count=0,
             )
-        )
-        video.source_count += 1
-        video.last_updated = datetime.now(timezone.utc)
-        return "inserted"
+            session_.add(video)
+            videos_by_sig[item.signature] = video
+    await session_.flush()
 
-    changed = False
-    for field_name, value in (
-        ("name", item.name),
-        ("type_name", item.type_name),
-        ("type_id", item.type_id),
-        ("year", item.year),
-        ("area", item.area),
-        ("lang", item.lang),
-        ("pic", item.pic),
-        ("blurb", item.blurb),
-        ("actor", item.actor),
-        ("director", item.director),
-        ("remarks", item.remarks),
-        ("vod_time", item.vod_time),
-        ("play_from", item.play_from),
-        ("play_url", item.play_url),
-        ("plays", plays_json),
-    ):
-        if value and getattr(existing, field_name) != value:
-            setattr(existing, field_name, value)
-            changed = True
+    now = datetime.now(timezone.utc)
+    inserted = updated = skipped = 0
+    seen_on_page: set[int] = set()
+    for item in items:
+        video = videos_by_sig[item.signature]
+        plays_json = json.dumps([p.as_dict() for p in item.plays], ensure_ascii=False)
+        # The raw play_url is only kept when parsing produced nothing: it is then
+        # the only material `repair_plays` can re-parse from. Once the structured
+        # `plays` exists the raw string is pure duplication (it dominates the DB).
+        raw_play_url = "" if item.plays else item.play_url
 
-    if changed:
-        video.last_updated = datetime.now(timezone.utc)
-        return "updated"
-    return "skipped"
+        existing = items_by_key.get(item.vod_id)
+        if existing is None:
+            if item.vod_id in seen_on_page:
+                continue  # the page itself lists the same vod_id twice
+            seen_on_page.add(item.vod_id)
+            session_.add(
+                SourceItem(
+                    source_id=source.id,
+                    video_id=video.id,
+                    source_vod_id=item.vod_id,
+                    name=item.name,
+                    type_name=item.type_name,
+                    type_id=item.type_id,
+                    year=item.year,
+                    area=item.area,
+                    lang=item.lang,
+                    pic=item.pic,
+                    blurb=item.blurb,
+                    actor=item.actor,
+                    director=item.director,
+                    remarks=item.remarks,
+                    vod_time=item.vod_time,
+                    play_from=item.play_from,
+                    play_url=raw_play_url,
+                    plays=plays_json,
+                )
+            )
+            video.source_count += 1
+            video.last_updated = now
+            inserted += 1
+            continue
+
+        changed = False
+        for field_name, value in (
+            ("name", item.name),
+            ("type_name", item.type_name),
+            ("type_id", item.type_id),
+            ("year", item.year),
+            ("area", item.area),
+            ("lang", item.lang),
+            ("pic", item.pic),
+            ("blurb", item.blurb),
+            ("actor", item.actor),
+            ("director", item.director),
+            ("remarks", item.remarks),
+            ("vod_time", item.vod_time),
+            ("play_from", item.play_from),
+            ("play_url", raw_play_url),
+            ("plays", plays_json),
+        ):
+            if value and getattr(existing, field_name) != value:
+                setattr(existing, field_name, value)
+                changed = True
+
+        if changed:
+            video.last_updated = now
+            updated += 1
+        else:
+            skipped += 1
+
+    return inserted, updated, skipped, inserted + updated
 
 
 async def load_type_map(client: Fetcher, source: Source) -> dict[int, str]:
@@ -207,41 +254,6 @@ async def load_type_map(client: Fetcher, source: Source) -> dict[int, str]:
         if tid and name:
             mapping[int(tid)] = name
     return mapping
-
-
-async def upsert_page(
-    session_: AsyncSession,
-    source: Source,
-    items: list[VodItem],
-    type_map: dict[int, str],
-    page: int,
-    latency: float,
-) -> tuple[int, int, int, int]:
-    """Write one fetched page. Returns (inserted, updated, skipped, changes)."""
-    inserted = updated = skipped = 0
-    for item in items:
-        if not item.type_name and item.type_id:
-            item.type_name = type_map.get(item.type_id, "")
-        outcome = await upsert_item(session_, source, item)
-        if outcome == "inserted":
-            inserted += 1
-        elif outcome == "updated":
-            updated += 1
-        else:
-            skipped += 1
-
-    src = await session_.get(Source, source.id)
-    if src is not None:
-        src.last_collect_at = datetime.now(timezone.utc)
-        src.last_page = page
-        src.latency_ms = int(latency)
-        src.health_status = "ok"
-        src.fail_streak = 0
-        src.last_error = None
-        src.item_count = await session_.scalar(
-            select(func.count()).select_from(SourceItem).where(SourceItem.source_id == source.id)
-        )
-    return inserted, updated, skipped, inserted + updated
 
 
 async def collect_source(
@@ -288,6 +300,7 @@ async def collect_source(
         page = 1
         previous_key: str | None = None
         consecutive_failures = 0
+        last_latency: float | None = None
         while True:
             if max_pages and page > max_pages:
                 break
@@ -350,8 +363,9 @@ async def collect_source(
                 try:
                     async with session() as s:
                         inserted, updated, skipped, page_changes = await upsert_page(
-                            s, source, items, type_map, page, response.latency_ms
+                            s, source, items, type_map
                         )
+                    last_latency = response.latency_ms
                     result.inserted += inserted
                     result.updated += updated
                     result.skipped += skipped
@@ -382,6 +396,25 @@ async def collect_source(
             page += 1
             if settings.request_delay:
                 await asyncio.sleep(settings.request_delay)
+
+        if result.pages:
+            # Source stats are refreshed once per sweep instead of once per page.
+            async with session() as s:
+                src = await s.get(Source, source.id)
+                if src is not None:
+                    src.last_collect_at = datetime.now(timezone.utc)
+                    src.last_page = result.pages
+                    if last_latency is not None:
+                        src.latency_ms = int(last_latency)
+                    src.health_status = "ok"
+                    src.fail_streak = 0
+                    src.last_error = None
+                    src.item_count = (
+                        await s.scalar(
+                            select(func.count()).select_from(SourceItem).where(SourceItem.source_id == source.id)
+                        )
+                        or 0
+                    )
     except Exception as exc:  # noqa: BLE001
         result.error = str(exc)
         async with session() as s:
@@ -819,8 +852,10 @@ async def merge_duplicates(dry_run: bool = False) -> dict[str, Any]:
 async def repair_plays() -> dict[str, int]:
     """Re-parse every stored `play_from` / `play_url` with the current parser.
 
-    Useful after the parser improves: raw fields are kept on `source_items`, so
-    the structured `plays` JSON can always be rebuilt without re-fetching. Text
+    Useful after the parser improves: rows whose parser produced nothing still
+    keep their raw `play_url`, so the structured `plays` JSON can be rebuilt
+    without re-fetching. Rows that already have structured plays have had their
+    raw string dropped (see `compact_raw_plays`) and are left alone. Text
     columns are re-cleaned at the same time (HTML entities, stray markup).
     """
     changed = 0
@@ -829,11 +864,12 @@ async def repair_plays() -> dict[str, int]:
         items = list(await s.scalars(select(SourceItem)))
         for item in items:
             total += 1
-            plays = parse_play_url(item.play_from, item.play_url)
-            new = json.dumps([p.as_dict() for p in plays], ensure_ascii=False)
-            if new != (item.plays or "[]"):
-                item.plays = new
-                changed += 1
+            if item.play_url:
+                plays = parse_play_url(item.play_from, item.play_url)
+                new = json.dumps([p.as_dict() for p in plays], ensure_ascii=False)
+                if new != (item.plays or "[]"):
+                    item.plays = new
+                    changed += 1
             for field_name in ("name", "type_name", "year", "area", "lang", "pic", "blurb", "actor", "director", "remarks"):
                 old = getattr(item, field_name) or ""
                 cleaned = clean_text(old)
@@ -849,3 +885,29 @@ async def repair_plays() -> dict[str, int]:
                     setattr(video, field_name, cleaned)
         await s.commit()
     return {"total": total, "changed": changed, "videos": len(videos)}
+
+
+async def compact_raw_plays() -> dict[str, int]:
+    """Drop the raw `play_url` from rows whose structured `plays` is already parsed.
+
+    The raw string is only repair material for rows the parser could not
+    structure; keeping both is pure duplication and `play_url` alone accounts
+    for a large share of the database file. VACUUM runs afterwards (sqlite
+    only) so the file actually shrinks.
+    """
+    async with session() as s:
+        condition = SourceItem.play_url != ""
+        condition = condition & SourceItem.plays.notin_(["", "[]"])
+        cleared = (await s.scalar(select(func.count()).select_from(SourceItem).where(condition))) or 0
+        await s.execute(update(SourceItem).where(condition).values(play_url=""))
+        await s.commit()
+
+    if IS_SQLITE:
+        from sqlalchemy.engine import make_url
+        import aiosqlite
+
+        database = make_url(settings.database_url).database
+        if database and database != ":memory:":
+            async with aiosqlite.connect(database) as conn:
+                await conn.execute("VACUUM")
+    return {"cleared": cleared}

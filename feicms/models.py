@@ -65,6 +65,12 @@ class Video(Base):
     """Merged video entry. One row per distinct title (deduped across sources)."""
 
     __tablename__ = "videos"
+    __table_args__ = (
+        # Listing endpoints filter by category/year and sort by last_updated;
+        # a composite index lets SQLite satisfy both without a separate sort.
+        Index("ix_videos_type_updated", "type_name", "last_updated"),
+        Index("ix_videos_year_updated", "year", "last_updated"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(300), index=True)

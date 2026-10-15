@@ -57,6 +57,7 @@ async def init_db() -> None:
             await conn.execute(text("PRAGMA foreign_keys=ON"))
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_columns(conn)
+        await _ensure_indexes(conn)
 
 
 async def _ensure_columns(conn) -> None:
@@ -73,6 +74,19 @@ async def _ensure_columns(conn) -> None:
     ):
         if column not in existing:
             await conn.execute(text(f"ALTER TABLE sources ADD COLUMN {column} {ddl}"))
+
+
+async def _ensure_indexes(conn) -> None:
+    """Create indexes added after a table already exists (create_all skips them)."""
+    if not IS_SQLITE:
+        return
+    from sqlalchemy import text
+
+    for name, columns in (
+        ("ix_videos_type_updated", "type_name, last_updated"),
+        ("ix_videos_year_updated", "year, last_updated"),
+    ):
+        await conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON videos ({columns})"))
 
 
 async def dispose() -> None:

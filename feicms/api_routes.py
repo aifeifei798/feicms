@@ -28,6 +28,7 @@ from .collector import (
     collect_all,
     collect_progress,
     collect_source,
+    compact_raw_plays,
     merge_duplicates,
     repair_plays,
     start_collect_all,
@@ -835,6 +836,12 @@ async def prune() -> dict[str, int]:
         for video in orphans:
             await s.delete(video)
     return {"removed": len(rows), "orphan_videos": len(orphans)}
+
+
+@router.post("/compact-raw")
+async def compact_raw() -> dict[str, int]:
+    """Maintenance: drop raw play_url strings already parsed into structured plays, then VACUUM."""
+    return await compact_raw_plays()
 
 
 @router.post("/repair-plays")

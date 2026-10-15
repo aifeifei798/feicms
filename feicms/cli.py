@@ -446,6 +446,19 @@ def repair_plays_cmd() -> None:
     asyncio.run(_run())
 
 
+@app.command("compact-raw")
+def compact_raw_cmd() -> None:
+    """清理已解析出结构化 plays 的行里的冗余 raw play_url，然后 VACUUM 收缩数据库。"""
+    from .collector import compact_raw_plays
+
+    async def _run() -> None:
+        await init_db()
+        result = await compact_raw_plays()
+        console.print(f"[green]清理 {result['cleared']} 条冗余 play_url[/green]")
+
+    asyncio.run(_run())
+
+
 @app.command("merge-duplicates")
 def merge_duplicates_cmd(
     dry_run: bool = typer.Option(False, "--dry-run", help="只统计，不合并"),
