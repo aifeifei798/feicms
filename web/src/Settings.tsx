@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type ApiKey, type Config } from "./api";
+import { api, type Config } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -102,142 +102,13 @@ export default function Settings({ notify }: { notify: Notify }) {
               <button className="btn btn-sm btn-outline" onClick={prune}>清理无播放源记录</button>
             </div>
             <p className="muted mt-2">改完 .env 后重启服务生效：uv run feicms serve</p>
+            <p className="muted mt-1">
+              对外 API key 与 MCP 接入在左侧「AI / MCP 接入」页面管理。
+            </p>
           </div>
         </div>
       </div>
 
-      <ApiKeyPanel notify={notify} />
     </section>
-  );
-}
-
-function ApiKeyPanel({ notify }: { notify: Notify }) {
-  const [keys, setKeys] = React.useState<ApiKey[]>([]);
-  const [name, setName] = React.useState("ai-client");
-  const [scopes, setScopes] = React.useState("read");
-  const [expiresDays, setExpiresDays] = React.useState("");
-  const [secret, setSecret] = React.useState("");
-
-  const load = () => {
-    api.apiKeys().then(setKeys).catch((e) => notify((e as Error).message, "error"));
-  };
-  React.useEffect(load, []);
-
-  const create = async () => {
-    try {
-      const created = await api.createApiKey({
-        name: name || "key",
-        scopes,
-        expires_days: expiresDays ? Number(expiresDays) : null,
-      });
-      setSecret(created.key);
-      notify(`已创建 key：${created.key}`);
-      load();
-    } catch (e) {
-      notify((e as Error).message, "error");
-    }
-  };
-
-  const toggle = async (key: ApiKey) => {
-    try {
-      await api.updateApiKey(key.id, { enabled: !key.enabled });
-      load();
-    } catch (e) {
-      notify((e as Error).message, "error");
-    }
-  };
-
-  const remove = async (id: number) => {
-    try {
-      await api.deleteApiKey(id);
-      notify(`已删除 key ${id}`);
-      load();
-    } catch (e) {
-      notify((e as Error).message, "error");
-    }
-  };
-
-  return (
-    <div className="card bg-base-100 border border-base-300 mt-1.5">
-      <div className="card-body">
-        <h2 className="card-title">API Key 与 MCP 接入</h2>
-        <p className="muted">
-          给脚本和 AI 客户端（Claude / OpenCode 等）发放长期访问密钥。数据库里只存 sha256 哈希，明文只在创建时显示一次。
-        </p>
-
-        <div className="mt-2 flex flex-wrap gap-2">
-          <input className="input input-sm" value={name} onChange={(e) => setName(e.target.value)} placeholder="key 名称" />
-          <select className="select select-sm" value={scopes} onChange={(e) => setScopes(e.target.value)}>
-            <option value="read">read（只读）</option>
-            <option value="write">write（可采集/改源）</option>
-            <option value="read,write">read,write</option>
-          </select>
-          <input
-            className="input input-sm"
-            value={expiresDays}
-            onChange={(e) => setExpiresDays(e.target.value)}
-            placeholder="有效期（天，留空=永久）"
-          />
-          <button className="btn btn-sm btn-primary" onClick={create}>创建 key</button>
-        </div>
-
-        {secret && (
-          <div className="alert alert-info mt-2">
-            <span className="mono">{secret}</span>
-            <button
-              className="btn btn-sm btn-outline mt-1"
-              onClick={() => navigator.clipboard?.writeText(secret)}
-            >
-              复制
-            </button>
-          </div>
-        )}
-
-        <table className="table mt-2">
-          <thead>
-            <tr><th>名称</th><th>key</th><th>权限</th><th>状态</th><th>使用次数</th><th>有效期</th><th></th></tr>
-          </thead>
-          <tbody>
-            {keys.map((key) => (
-              <tr key={key.id}>
-                <td>{key.name}</td>
-                <td className="mono">{key.prefix}…</td>
-                <td className="mono">{key.scopes}</td>
-                <td>
-                  <button className={`btn btn-sm ${key.enabled ? "btn-success" : "btn-ghost"}`} onClick={() => toggle(key)}>
-                    {key.enabled ? "启用" : "停用"}
-                  </button>
-                </td>
-                <td>{key.usage_count}</td>
-                <td>{key.expires_at ? new Date(key.expires_at).toLocaleDateString() : "永久"}</td>
-                <td>
-                  <button className="btn btn-sm btn-outline" onClick={() => remove(key.id)}>删除</button>
-                </td>
-              </tr>
-            ))}
-            {!keys.length && <tr><td colSpan={7} className="muted">还没有 key。创建一个只读 key 给 AI 用。</td></tr>}
-          </tbody>
-        </table>
-
-        <div className="mt-3">
-          <p className="muted">MCP 端点：<span className="mono">POST /mcp</span>（HTTP），或本地 stdio：<span className="mono">uv run feicms mcp</span></p>
-          <pre className="mono bg-base-200 rounded-box p-3 mt-2 whitespace-pre-wrap">
-{JSON.stringify(
-  {
-    mcpServers: {
-      feicms: {
-        type: "http",
-        url: `${window.location.origin}/mcp`,
-        headers: { "X-API-Key": "fk_..." },
-      },
-    },
-  },
-  null,
-  2
-)}
-          </pre>
-        </div>
-      </div>
-    </div>
   );
 }

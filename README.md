@@ -206,6 +206,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | POST | `/api/login` | `{username, password}` → token（同时设置 cookie） |
 | POST | `/api/logout` | 清除登录 cookie |
 | GET / POST / PATCH / DELETE | `/api/apikeys[/{id}]` | API key 管理（仅管理员账号） |
+| GET | `/api/mcp/tools` | MCP 工具清单（含每个工具需要的 scope） |
 | GET | `/api/sources` | 站点列表（`?enabled=&health=&q=`） |
 | POST | `/api/sources` | 新增站点 |
 | GET / PATCH / DELETE | `/api/sources/{id}` | 查看 / 修改 / 删除 |
@@ -350,7 +351,7 @@ uv run feicms apikey revoke 3
 uv run feicms apikey update 3 --enabled --scopes read
 ```
 
-数据库里只存 **sha256 哈希**，明文只在创建时打印一次，丢了只能重新创建。面板的「设置」页也能创建/停用/删除。
+数据库里只存 **sha256 哈希**，明文只在创建时打印一次，丢了只能重新创建。管理面板左侧的 **「AI / MCP 接入」** 页面可以创建 / 停用 / 删除 key、复制客户端配置、实时列出 MCP 工具，并附带使用说明。
 
 使用：
 

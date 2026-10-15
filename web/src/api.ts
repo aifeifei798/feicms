@@ -246,6 +246,22 @@ export interface CreatedKey {
   scopes: string;
 }
 
+export interface McpTool {
+  name: string;
+  description: string;
+  scopes: string[];
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface McpInfo {
+  name: string;
+  version: string;
+  transport: string;
+  endpoint: string;
+  authenticated: boolean;
+  tools: string[];
+}
+
 export interface Config {
   database_url: string;
   sources_file: string;
@@ -332,6 +348,8 @@ export const api = {
   imagePrune: (deleteFiles = true) => request<{ removed: number; files_deleted: number }>(`/api/images/prune?delete_files=${deleteFiles}`, { method: "POST" }),
   imageRepair: () => request<{ restored: number; requeued: number; files_deleted: number }>("/api/images/repair", { method: "POST" }),
   apiKeys: () => request<ApiKey[]>("/api/apikeys"),
+  mcpInfo: () => request<McpInfo>("/mcp"),
+  mcpTools: () => request<McpTool[]>("/api/mcp/tools"),
   createApiKey: (body: { name: string; scopes?: string; expires_days?: number | null }) =>
     request<CreatedKey>("/api/apikeys", { method: "POST", body: JSON.stringify(body) }),
   updateApiKey: (id: number, body: { name?: string; scopes?: string; enabled?: boolean; expires_days?: number | null }) =>

@@ -106,6 +106,13 @@ const GROUPS: Group[] = [
         tryable: true,
       },
       {
+        method: "GET",
+        path: "/api/mcp/tools",
+        summary: "MCP 工具清单（含每个工具需要的 scope）",
+        example: "/api/mcp/tools",
+        tryable: true,
+      },
+      {
         method: "POST",
         path: "/mcp",
         summary: "JSON-RPC：initialize / tools/list / tools/call / resources/list",

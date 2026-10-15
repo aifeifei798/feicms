@@ -546,6 +546,14 @@ async def stats() -> Stats:
     )
 
 
+@router.get("/mcp/tools")
+async def mcp_tool_catalogue() -> list[dict[str, Any]]:
+    """MCP tool catalogue, including the scope each tool requires (for the UI)."""
+    from .mcp import TOOLS
+
+    return TOOLS
+
+
 @router.get("/config")
 async def config() -> dict[str, Any]:
     """Effective configuration, all of it driven by .env / environment variables."""

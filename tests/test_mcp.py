@@ -99,6 +99,15 @@ def test_unknown_tool_and_method():
     assert "error" in _rpc(client, "totally/unknown")
 
 
+def test_tool_catalogue_endpoint():
+    client = _client()
+    tools = client.get("/api/mcp/tools").json()
+    assert {tool["name"] for tool in tools} == TOOL_NAMES
+    assert all(tool["scopes"] for tool in tools)
+    info = client.get("/mcp").json()
+    assert info["name"] == "feicms" and sorted(info["tools"]) == sorted(TOOL_NAMES)
+
+
 def test_stdio_handler_is_reusable():
     response = asyncio.run(handle_rpc({"jsonrpc": "2.0", "id": 3, "method": "ping"}, None))
     assert response == {"jsonrpc": "2.0", "id": 3, "result": {}}

@@ -6,8 +6,9 @@ import Images from "./Images";
 import Jobs from "./Jobs";
 import Settings from "./Settings";
 import ApiDocs from "./ApiDocs";
+import AiAccess from "./AiAccess";
 
-type View = "dashboard" | "sources" | "videos" | "images" | "jobs" | "api" | "settings";
+type View = "dashboard" | "sources" | "videos" | "images" | "jobs" | "api" | "ai" | "settings";
 
 const NAV: { key: View; label: string; icon: string }[] = [
   { key: "dashboard", label: "总览", icon: "▦" },
@@ -16,6 +17,7 @@ const NAV: { key: View; label: string; icon: string }[] = [
   { key: "images", label: "图片库", icon: "▤" },
   { key: "jobs", label: "采集记录", icon: "≡" },
   { key: "api", label: "API 说明", icon: "⌘" },
+  { key: "ai", label: "AI / MCP 接入", icon: "✦" },
   { key: "settings", label: "配置", icon: "⚙" },
 ];
 
@@ -136,6 +138,7 @@ export default function App() {
           {view === "images" && <Images notify={notify} />}
           {view === "jobs" && <Jobs notify={notify} />}
           {view === "api" && <ApiDocs notify={notify} />}
+          {view === "ai" && <AiAccess notify={notify} />}
           {view === "settings" && <Settings notify={notify} />}
         </main>
       </div>
