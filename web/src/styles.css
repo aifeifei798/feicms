@@ -153,6 +153,10 @@ body {
 .source-progress .progress-bar {
   width: 110px;
 }
+.progress-note {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
 
 .nav-actions {
   display: flex;

@@ -132,10 +132,16 @@ GET  /api/sources/export?fmt=yaml|json|csv
 | 参数 | 含义 |
 |---|---|
 | `--pages N` | 每个站点抓 N 页 |
-| `--pages 0` / `--full` | 全量扫描，上限 `FEICMS_FULL_PAGE_CAP`（默认 200 页），不做提前停止 |
+| `--pages 0` / `--full` | 真·全量：遍历该站**真实报告**的页数（`pagecount`，没有则用 `total / FEICMS_PAGE_LIMIT` 推算，都没有则一直抓到空页为止），不做提前停止；`FEICMS_FULL_PAGE_CAP` 只是保险闸，默认 `0` = 无上限 |
 | 省略 | 使用 `FEICMS_PAGES`（默认 5），或站点自己的 `max_pages` |
 
 采集结果会打印 `采集页/总页 new= updated= skipped= total= 耗时`，并写入 `collect_jobs` 表用于审计。
+
+「全量」不是固定页数：每轮都会按该站**真实报告**的 `pagecount` 遍历（站点只给 `total` 时用 `total ÷ 该页实际返回的条目数` 推算，因为很多站强制每页 20 条；两个都没有就一直抓到空页为止，并有一个 10000 页的防失控兜底）。如果某个站忽略分页参数（每页返回同一批条目），采集会自动停止，不会空跑几千页。`FEICMS_FULL_PAGE_CAP` 现在默认 `0`（无上限），只作为保险闸：想防止某个 3651 页的站跑太久，可以设成例如 `500`。全量一轮请求量很大（常见站点 3000～8000 页），建议只对需要完整库的站点用 `全量`，日常增量用默认页数。
+
+采集并发默认 `FEICMS_CONCURRENCY=0`，即**全部站点同时开**：每个资源站是独立站点，各自一个连接、各自翻页，互不排队。只有当你的网络或上游扛不住时才设成数字（例如 `8`）。SQLite 已开启 WAL 并在写冲突时自动重试整页，几十个站同时写不会报 "database is locked"。
+
+一轮全量中**单页超时不会中断整轮**：失败的页会被跳过并记录，只有连续 5 页失败才认为该站不可达并停止（进度表会显示「跳过 N 页」和停止原因）。第 1 页失败才算该站采集失败。
 
 管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress`。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
 
@@ -320,8 +326,8 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_SUBSCRIBE_INTERVAL` | 1440 | 订阅同步间隔（分钟） |
 | `FEICMS_PAGES` | 5 | 默认采集页数 |
 | `FEICMS_PAGE_LIMIT` | 40 | 每页请求条目数 |
-| `FEICMS_FULL_PAGE_CAP` | 200 | 全量扫描的页数上限 |
-| `FEICMS_CONCURRENCY` | 6 | 站点并发 |
+| `FEICMS_FULL_PAGE_CAP` | 0 | 全量扫描的保险闸（0 = 无上限，按站点真实页数遍历） |
+| `FEICMS_CONCURRENCY` | 0 | 同时采集的站点数（0 = 全部站点同时开，每个站一个连接） |
 | `FEICMS_TIMEOUT` | 20 | 请求超时（秒） |
 | `FEICMS_IMPERSONATE` | `chrome124` | curl_cffi 浏览器指纹 |
 | `FEICMS_DELAY` | 0.3 | 请求间隔（秒） |

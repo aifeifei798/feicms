@@ -323,6 +323,8 @@ async def collect_one(
         "updated": result.updated,
         "skipped": result.skipped,
         "error": result.error,
+        "warnings": len(result.warnings),
+        "stopped_reason": result.stopped_reason,
         "elapsed_ms": round(result.elapsed_ms, 1),
     }
 
@@ -348,6 +350,8 @@ async def collect_many(payload: CollectRequest) -> list[dict[str, Any]]:
             "updated": r.updated,
             "skipped": r.skipped,
             "error": r.error,
+            "warnings": len(r.warnings),
+            "stopped_reason": r.stopped_reason,
             "elapsed_ms": round(r.elapsed_ms, 1),
         }
         for r in results
@@ -357,6 +361,8 @@ async def collect_many(payload: CollectRequest) -> list[dict[str, Any]]:
 @router.post("/collect/start")
 async def collect_start(payload: CollectRequest) -> dict[str, Any]:
     """Start a sweep in the background; poll /api/collect/progress for live status."""
+    if collect_progress()["running"]:
+        raise HTTPException(409, "采集正在进行中，请等待当前一轮完成")
     return await start_collect_all(
         names=payload.names,
         pages=payload.pages,

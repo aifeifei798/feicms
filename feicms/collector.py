@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from sqlalchemy import delete, func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -17,6 +17,14 @@ from .fetcher import Fetcher, build_query, fetch
 from .models import CollectJob, Image, Source, SourceItem, SourceType, Video
 from .normalizer import VodItem, build_signature, clean_text, parse_play_url, parse_raw_items, parse_response
 from .db import session
+
+# Absolute runaway guard: only used when a source reports neither pagecount nor
+# total and keeps handing back new items. A real full sweep is bounded by the
+# pagecount the source itself reports.
+RUNAWAY_PAGE_GUARD = 10000
+# A source that fails this many pages in a row is unreachable/rate-limiting, so
+# the sweep stops instead of walking thousands of pages.
+MAX_CONSECUTIVE_PAGE_FAILURES = 5
 
 
 @dataclass
@@ -31,6 +39,8 @@ class CollectResult:
     elapsed_ms: float = 0.0
     pagecount: int = 0
     total: int = 0
+    warnings: list[str] = field(default_factory=list)
+    stopped_reason: str | None = None
     finished_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -193,7 +203,9 @@ async def collect_source(
     # pages semantics:
     #   None  -> use the per-source max_pages (incremental, stops early)
     #   > 0   -> exactly that many pages
-    #   <= 0  -> full sweep: walk every page the source reports, up to FEICMS_FULL_PAGE_CAP
+    #   <= 0  -> full sweep: walk every page the source actually reports. The
+    #            ceiling is whatever the source says (pagecount, or total/limit);
+    #            FEICMS_FULL_PAGE_CAP is only a safety brake and 0 means "no brake".
     full = pages is not None and pages <= 0
     max_pages = settings.full_page_cap if full else (pages if pages is not None else source.max_pages)
     if full:
@@ -216,25 +228,68 @@ async def collect_source(
                     else:
                         s.add(SourceType(source_id=source.id, type_id=tid, type_name=tname))
 
-        for page in range(1, max_pages + 1):
-            url = build_query(source.url, ac, page, limit)
-            response = await fetch(client, url)
-            items, pagecount, total = parse_response(response.text, source.api_format)
+        page = 1
+        previous_key: str | None = None
+        consecutive_failures = 0
+        while True:
+            if max_pages and page > max_pages:
+                break
+            if page > RUNAWAY_PAGE_GUARD:
+                result.stopped_reason = (
+                    f"stopped after {RUNAWAY_PAGE_GUARD} pages: the source reports no pagecount "
+                    "and keeps returning items"
+                )
+                break
 
-            # Some sites do not implement ac=detail; fall back to the list endpoint.
-            if not items and ac == "detail":
-                response = await fetch(client, build_query(source.url, "list", page, limit))
+            try:
+                url = build_query(source.url, ac, page, limit)
+                response = await fetch(client, url)
                 items, pagecount, total = parse_response(response.text, source.api_format)
+
+                # Some sites do not implement ac=detail; fall back to the list endpoint.
+                if not items and ac == "detail":
+                    response = await fetch(client, build_query(source.url, "list", page, limit))
+                    items, pagecount, total = parse_response(response.text, source.api_format)
+            except Exception as exc:  # noqa: BLE001 - one bad page must not end the sweep
+                consecutive_failures += 1
+                result.warnings.append(f"page {page}: {exc}")
+                if page == 1:
+                    result.error = f"page 1 failed: {exc}"
+                    break
+                if consecutive_failures >= MAX_CONSECUTIVE_PAGE_FAILURES:
+                    result.stopped_reason = (
+                        f"stopped at page {page}: {consecutive_failures} pages failed in a row"
+                    )
+                    break
+                page += 1
+                continue
 
             result.pagecount = pagecount or result.pagecount
             result.total = total or result.total
 
             if not items:
+                if page > 1:
+                    # Nothing left to fetch: the catalogue ends here.
+                    break
                 result.error = f"page {page} returned no items (HTTP {response.status_code})"
                 break
 
+            # Sites that report only a total: derive the real number of pages from
+            # how many items the page actually carried (many force limit=20).
+            if not result.pagecount and result.total and items:
+                result.pagecount = -(-result.total // len(items))
+
+            # A source that ignores the page parameter keeps handing back the same
+            # list; walking it forever would be pointless.
+            page_key = "|".join(f"{item.vod_id}:{item.name}" for item in items)
+            if page > 1 and page_key == previous_key:
+                result.stopped_reason = f"source repeats page {page - 1} at page {page}"
+                break
+            previous_key = page_key
+            consecutive_failures = 0
+
             page_changes = 0
-            for attempt in range(3):
+            for attempt in range(5):
                 try:
                     async with session() as s:
                         inserted, updated, skipped, page_changes = await upsert_page(
@@ -244,12 +299,13 @@ async def collect_source(
                     result.updated += updated
                     result.skipped += skipped
                     break
-                except IntegrityError:
-                    # Two sources created the same title at the same time: the
+                except (IntegrityError, OperationalError):
+                    # Two sources created the same title at the same time, or every
+                    # source is writing at once and sqlite briefly locked: the
                     # transaction was rolled back, so replay the page.
-                    if attempt == 2:
+                    if attempt == 4:
                         raise
-                    await asyncio.sleep(0.15 * (attempt + 1))
+                    await asyncio.sleep(0.2 * (attempt + 1))
 
             result.pages = page
             if on_progress is not None:
@@ -264,8 +320,9 @@ async def collect_source(
                 )
             if stop_on_no_change and page_changes == 0 and page > 1:
                 break
-            if pagecount and page >= pagecount:
+            if result.pagecount and page >= result.pagecount:
                 break
+            page += 1
             if settings.request_delay:
                 await asyncio.sleep(settings.request_delay)
     except Exception as exc:  # noqa: BLE001
@@ -327,16 +384,22 @@ async def collect_all(
     async with session() as s:
         sources = await _select_sources(s, names, only_enabled, source_ids)
 
-    sem = asyncio.Semaphore(settings.concurrency)
+    # 0 (default) means "no ceiling": every source is a separate site, so all of
+    # them are walked at once. A positive number throttles how many run together.
+    limit = settings.concurrency
+    sem = asyncio.Semaphore(limit) if limit and limit > 0 else None
 
     async def run(src: Source) -> CollectResult:
-        async with sem:
-            client = client_factory() if client_factory is not None else None
-            page_cb = (lambda snap: on_progress(src.id, snap)) if on_progress is not None else None
+        client = client_factory() if client_factory is not None else None
+        page_cb = (lambda snap: on_progress(src.id, snap)) if on_progress is not None else None
+        if sem is None:
             result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
-            if on_result is not None:
-                on_result(result)
-            return result
+        else:
+            async with sem:
+                result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
+        if on_result is not None:
+            on_result(result)
+        return result
 
     return await asyncio.gather(*(run(src) for src in sources))
 
@@ -380,6 +443,8 @@ def _progress_entry(src: Source) -> dict[str, Any]:
         "updated": 0,
         "skipped": 0,
         "elapsed_ms": 0,
+        "warnings": 0,
+        "stopped_reason": None,
         "current": True,
         "enabled": src.enabled,
     }
@@ -418,7 +483,14 @@ async def start_collect_all(
             entry = _progress_entry(src)
             _source_progress[src.id] = entry
         entry["name"] = src.name
-        entry["target"] = src.max_pages
+        if pages is None:
+            entry["target"] = src.max_pages
+        elif pages > 0:
+            entry["target"] = pages
+        else:
+            # Full sweep: the ceiling is the pagecount the source reports, which
+            # is only known once the first page has been fetched.
+            entry["target"] = 0
         entry["enabled"] = src.enabled
         entry["current"] = src.id in selected_ids
         if src.id in selected_ids:
@@ -447,19 +519,21 @@ async def start_collect_all(
         _collect_state["inserted"] += result.inserted
         _collect_state["updated"] += result.updated
         _collect_state["skipped"] += result.skipped
-        if result.error:
+        if result.error or result.stopped_reason:
             _collect_state["failed_sources"] += 1
         entry = by_id.get(result.source_id)
         if entry is not None:
             entry.update(
                 {
-                    "status": "failed" if result.error else "done",
+                    "status": "failed" if (result.error or result.stopped_reason) else "done",
                     "pages": result.pages,
                     "pagecount": result.pagecount or entry.get("pagecount", 0),
                     "inserted": result.inserted,
                     "updated": result.updated,
                     "skipped": result.skipped,
                     "elapsed_ms": round(result.elapsed_ms, 1),
+                    "warnings": len(result.warnings),
+                    "stopped_reason": result.stopped_reason,
                 }
             )
 

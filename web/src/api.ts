@@ -108,6 +108,8 @@ export interface SourceProgress {
   updated: number;
   skipped: number;
   elapsed_ms: number;
+  warnings?: number;
+  stopped_reason?: string | null;
   current: boolean;
   enabled: boolean;
 }

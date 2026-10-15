@@ -8,8 +8,8 @@ FEICMS_DB=sqlite+aiosqlite:///data/feicms.db
 FEICMS_SOURCES=sources.yaml
 FEICMS_PAGES=5
 FEICMS_PAGE_LIMIT=40
-FEICMS_FULL_PAGE_CAP=200
-FEICMS_CONCURRENCY=6
+FEICMS_FULL_PAGE_CAP=0
+FEICMS_CONCURRENCY=0
 FEICMS_TIMEOUT=20
 FEICMS_RETRIES=3
 FEICMS_AUTO_COLLECT=true
@@ -189,8 +189,8 @@ export default function Settings({ notify }: { notify: Notify }) {
                     <tr><td>FEICMS_SUBSCRIBE_INTERVAL</td><td>{config.subscribe_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_PAGES</td><td>{config.default_pages}</td></tr>
                     <tr><td>FEICMS_PAGE_LIMIT</td><td>{config.page_limit}</td></tr>
-                    <tr><td>FEICMS_FULL_PAGE_CAP</td><td>{config.full_page_cap}</td></tr>
-                    <tr><td>FEICMS_CONCURRENCY</td><td>{config.concurrency}</td></tr>
+                    <tr><td>FEICMS_FULL_PAGE_CAP</td><td>{config.full_page_cap > 0 ? config.full_page_cap : "无上限（按站点真实页数）"}</td></tr>
+                    <tr><td>FEICMS_CONCURRENCY</td><td>{config.concurrency > 0 ? config.concurrency : "全部站点同时"}</td></tr>
                     <tr><td>FEICMS_TIMEOUT</td><td>{config.request_timeout}</td></tr>
                     <tr><td>FEICMS_IMPERSONATE</td><td>{config.impersonate}</td></tr>
                     <tr><td>FEICMS_DELAY</td><td>{config.request_delay}</td></tr>

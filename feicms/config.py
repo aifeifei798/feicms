@@ -55,15 +55,19 @@ class Settings:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/121.0 Safari/537.36",
     )
-    concurrency: int = _env_int("FEICMS_CONCURRENCY", 6)
+    # How many sources are collected at the same time. 0 = no ceiling: every
+    # source is a different site, so they are all walked in parallel (one
+    # connection each). Set a number only if a host or network can't cope.
+    concurrency: int = _env_int("FEICMS_CONCURRENCY", 0)
     max_retries: int = _env_int("FEICMS_RETRIES", 3)
 
     # Collection
     default_pages: int = _env_int("FEICMS_PAGES", 5)
     page_limit: int = _env_int("FEICMS_PAGE_LIMIT", 40)
-    # Hard ceiling for a "full" sweep (pages=0): how many pages we are willing to
-    # walk through a single source before giving up.
-    full_page_cap: int = _env_int("FEICMS_FULL_PAGE_CAP", 200)
+    # Safety brake for a "full" sweep (pages=0). A sweep walks every page the
+    # source reports; this only caps sources that report no pagecount at all.
+    # 0 = no ceiling, i.e. a real full sweep of every page.
+    full_page_cap: int = _env_int("FEICMS_FULL_PAGE_CAP", 0)
 
     # Images (vod_pic posters). Files are sharded by sha256 of the image bytes:
     #   <image_dir>/<sha[0:2]>/<sha[2:4]>/<sha>.<ext>

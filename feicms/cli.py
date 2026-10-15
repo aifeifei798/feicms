@@ -200,9 +200,12 @@ def collect(
         for r in results:
             status = "OK" if not r.error else "FAIL"
             scope = f"{r.pages}/{r.pagecount or '?'}页"
+            note = r.error or r.stopped_reason or ""
+            if r.warnings:
+                note += f" (跳过 {len(r.warnings)} 页)"
             console.print(
                 f"[{status}] {r.source_name}: {scope} new={r.inserted} updated={r.updated} "
-                f"skipped={r.skipped} total={r.total} {r.elapsed_ms / 1000:.1f}s {r.error or ''}"
+                f"skipped={r.skipped} total={r.total} {r.elapsed_ms / 1000:.1f}s {note}"
             )
 
     asyncio.run(_run())

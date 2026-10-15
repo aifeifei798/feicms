@@ -198,7 +198,7 @@ const GROUPS: Group[] = [
           {
             name: "pages",
             type: "int",
-            note: "省略 = 该站 max_pages；>0 = 指定页数；0 = 全量遍历所有页（上限 FEICMS_FULL_PAGE_CAP）",
+            note: "省略 = 该站 max_pages；>0 = 指定页数；0 = 真·全量，遍历该站真实报告的所有页（FEICMS_FULL_PAGE_CAP 只是保险闸，默认 0 = 无上限）",
           },
         ],
         example: "curl -X POST 'http://127.0.0.1:8000/api/sources/1/collect?pages=0'",

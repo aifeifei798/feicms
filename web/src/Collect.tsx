@@ -107,11 +107,14 @@ export default function Collect({ notify }: { notify: Notify }) {
           <option value="1">1 页</option>
           <option value="3">3 页</option>
           <option value="5">5 页</option>
-          <option value="0">全量扫描所有页</option>
+          <option value="0">全量（每站真实页数）</option>
         </select>
         <button className="btn btn-sm btn-primary" onClick={startAll} disabled={busy || progress?.running}>
           {busy || progress?.running ? "采集中…" : "采集全部"}
         </button>
+        {pages === "0" && (
+          <span className="muted">全量按每个站真实报告的所有页遍历，常见站点 3000～8000 页，一轮可能几十分钟</span>
+        )}
         {progress?.failed_sources ? (
           <button className="btn btn-sm btn-outline" onClick={retryFailed} disabled={busy || progress?.running}>
             重试失败的 {progress.failed_sources} 个
@@ -191,6 +194,11 @@ export default function Collect({ notify }: { notify: Notify }) {
                       </div>
                       <span className="muted">{s.current ? `${s.pages}/${totalPages(s) || "?"} 页` : "-"}</span>
                     </div>
+                    {s.current && (s.stopped_reason || s.warnings) && (
+                      <div className="progress-note muted">
+                        {s.stopped_reason ?? `跳过 ${s.warnings} 页`}
+                      </div>
+                    )}
                   </td>
                   <td>{s.inserted}</td>
                   <td>{s.updated}</td>
