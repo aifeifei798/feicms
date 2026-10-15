@@ -12,6 +12,7 @@ import React from "react";
  */
 export default function Player({ url, poster }: { url: string; poster?: string | null }) {
   const ref = React.useRef<HTMLVideoElement>(null);
+  const wrapRef = React.useRef<HTMLDivElement>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [needsGesture, setNeedsGesture] = React.useState(false);
   const [mutedStart, setMutedStart] = React.useState(false);
@@ -105,8 +106,40 @@ export default function Player({ url, poster }: { url: string; poster?: string |
     video.play().catch(() => undefined);
   };
 
+  // Fullscreen on the wrapper (not just the <video>) so the episode/line strip
+  // stays out of the way and rotating the phone fills the screen. iOS Safari
+  // only exposes fullscreen on <video> and uses the webkit-prefixed names, so
+  // both are tried.
+  const toggleFullscreen = () => {
+    const wrap = wrapRef.current;
+    const video = ref.current;
+
+    if (document.fullscreenElement || (document as any).webkitIsFullScreen) {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => undefined);
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+      return;
+    }
+
+    const request = (el: Element | null): Promise<void> | undefined => {
+      if (!el) return undefined;
+      if (el.requestFullscreen) return el.requestFullscreen();
+      const webkit = (el as any).webkitRequestFullscreen;
+      if (webkit) {
+        webkit.call(el);
+        return Promise.resolve();
+      }
+      return undefined;
+    };
+
+    const promise = request(wrap) || request(video);
+    if (promise) promise.catch(() => undefined);
+  };
+
   return (
-    <div className="player-wrap">
+    <div className="player-wrap" ref={wrapRef}>
       <video
         ref={ref}
         controls
@@ -128,6 +161,9 @@ export default function Player({ url, poster }: { url: string; poster?: string |
           静音播放中，点击开启声音
         </button>
       )}
+      <button type="button" className="player-fullscreen" onClick={toggleFullscreen} aria-label="全屏">
+        全屏
+      </button>
       {error && !needsGesture && (
         <div className="player-error">
           <span className="muted">{error}</span>
