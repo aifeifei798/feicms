@@ -64,7 +64,8 @@ export default function App() {
     <div className="app-shell">
       <header className="navbar bg-base-100 border-b border-base-300 px-4">
         <div className="navbar-start">
-          <span className="badge badge-lg badge-primary">feicms</span>
+          <img src="/favicon.svg" alt="feicms logo" className="brand-mark" width="30" height="30" />
+          <span className="brand-name">feicms</span>
           <span className="muted ml-2">资源站采集 · 维护 · 聚合</span>
         </div>
         <div className="navbar-end">

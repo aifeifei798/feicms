@@ -1,5 +1,9 @@
 # feicms
 
+<p align="center">
+  <img src="assets/logo-banner.png" alt="feicms" width="640" />
+</p>
+
 [![test](https://github.com/aifeifei798/feicms/actions/workflows/test.yml/badge.svg)](https://github.com/aifeifei798/feicms/actions/workflows/test.yml)
 
 资源站（采集站）聚合系统：把多个 `api.php/provide/vod` 类型的站点统一采集进一个数据库，提供 FastAPI 查询接口、CLI 运维工具和一个 DaisyUI 管理面板。
@@ -453,14 +457,34 @@ docker run -p 8000:8000 -v ./data:/app/data \
 
 ---
 
-## 13. 已知限制
+## 14. 已知限制
 
 - 部分站点忽略 `pg` / `page` 参数（翻页返回相同内容），部分站点强制 `limit=20`；
 - 上游站点域名变动频繁，健康检查会自动禁用失效站点，但不会自动替换；
 - 网络环境（代理、DNS、CDN 屏蔽）会直接影响采集成功率；
 - 标题归一化去重是启发式的，跨站点同名不同影片可能合并，需要人工校对。
 
-## 14. 合规声明
+## 15. Logo 与图标
+
+品牌色 `#4f7cff`，图形含义是「多个资源站 → 汇聚 → 一个可播放的库」。
+
+| 文件 | 用途 |
+|---|---|
+| `assets/logo-mark.svg` | 图标（渐变圆角方块），管理面板与 favicon 使用 |
+| `assets/logo-mark-mono.svg` | 单色图标（透明背景），文档/浅色背景使用 |
+| `assets/logo.svg` / `assets/logo-dark.svg` | 图标 + 文字（浅色 / 深色背景） |
+| `assets/logo-banner.svg` / `.png` | README 头图（1200×400） |
+| `assets/icon-{16,32,48,128,180,192,256,512}.png` | 各尺寸位图 |
+| `web/public/favicon.svg` / `favicon.png` / `apple-touch-icon.png` | 浏览器图标（Vite 自动打包进 `web/dist`） |
+
+重新生成位图（改完 SVG 后）：
+
+```bash
+uv sync --extra icons
+uv run python scripts/make_icons.py
+```
+
+## 16. 合规声明
 
 本项目只是**采集与聚合的技术实现**，不包含任何站点列表或内容。使用时请自行确认：上游站点是否授权数据抓取、`robots.txt` 与服务条款是否允许、以及下游分发是否合规。由此产生的法律责任由使用者承担。
 

@@ -15,6 +15,17 @@ body {
   min-height: 100vh;
 }
 
+.brand-mark {
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 8px rgba(31, 79, 184, 0.25);
+}
+.brand-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--brand);
+  letter-spacing: -0.02em;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
