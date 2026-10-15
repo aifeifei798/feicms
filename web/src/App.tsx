@@ -192,6 +192,7 @@ export default function App() {
         )}
 
         <div className="nav-actions">
+          <a className="nav-front" href="/" title="前台影视库">前台</a>
           <ThemePicker theme={theme} setTheme={setTheme} />
           {auth?.auth_required && (
             <div className="user-chip">

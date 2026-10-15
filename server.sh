@@ -74,7 +74,8 @@ lan_ips() {
 # 默认 FEICMS_HOST=0.0.0.0，所以局域网/其它机器也能访问；打印本机 + 局域网地址
 print_urls() {
   local host="${FEICMS_HOST:-0.0.0.0}" port="${FEICMS_PORT:-8000}" ip
-  echo "本机:     http://127.0.0.1:$port/"
+  echo "前台:     http://127.0.0.1:$port/  (影视库浏览)"
+  echo "后台:     http://127.0.0.1:$port/admin  (管理面板)"
   if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ] || [ -z "$host" ]; then
     for ip in $(lan_ips); do
       echo "局域网:   http://$ip:$port/"

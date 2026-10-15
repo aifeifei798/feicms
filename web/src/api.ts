@@ -498,3 +498,34 @@ export const api = {
     request<ApiKey>(`/api/apikeys/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteApiKey: (id: number) => authorizedFetch(`/api/apikeys/${id}`, { method: "DELETE" }),
 };
+
+/**
+ * Public browsing front site (`/`). Read-only: it only exposes the library,
+ * never sources, collection or configuration.
+ */
+export interface SiteStats {
+  videos: number;
+  sources: number;
+  posters: number;
+  last_updated: string | null;
+}
+
+export interface SiteFilters {
+  types: { type_name: string; count: number }[];
+  years: string[];
+  areas: string[];
+}
+
+export const siteApi = {
+  stats: () => request<SiteStats>("/api/site/stats"),
+  filters: () => request<SiteFilters>("/api/site/filters"),
+  videos: (params: Record<string, string | number>) => {
+    const query = Object.entries(params)
+      .filter(([, value]) => value !== "" && value !== undefined && value !== null)
+      .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+      .join("&");
+    return request<Page<VideoSummary>>(`/api/site/videos${query ? `?${query}` : ""}`);
+  },
+  video: (id: number) => request<Video>(`/api/site/videos/${id}`),
+  related: (id: number) => request<VideoSummary[]>(`/api/site/videos/${id}/related`),
+};

@@ -527,6 +527,65 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: "前台公开接口（只读）",
+    note:
+      "前台影视库（`/`）用的端点，只读，默认无需登录（FEICMS_PUBLIC_SITE=false 时同样要求登录）。" +
+      "不暴露站点、采集与配置。",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/site/stats",
+        summary: "影片数 / 启用站点数 / 本地海报数 / 最近更新时间",
+        example: "/api/site/stats",
+        tryable: true,
+      },
+      {
+        method: "GET",
+        path: "/api/site/filters",
+        summary: "分类（带计数）、年份、地区",
+        example: "/api/site/filters",
+        tryable: true,
+      },
+      {
+        method: "GET",
+        path: "/api/site/videos",
+        summary: "前台列表：搜索、分类、年份、排序、分页",
+        params: [
+          { name: "q", type: "string", note: "标题搜索" },
+          { name: "type_name", type: "string", note: "分类名" },
+          { name: "year", type: "string", note: "年份" },
+          { name: "sort", type: "string", default: "updated", note: "updated | name | source_count" },
+          { name: "limit", type: "int", default: "24", note: "1–100" },
+          { name: "offset", type: "int", default: "0", note: "偏移" },
+        ],
+        example: "/api/site/videos?q=流浪&type_name=电影&sort=updated&limit=24",
+        tryable: true,
+      },
+      {
+        method: "GET",
+        path: "/api/site/videos/{id}",
+        summary: "影片详情 + 全部播放源（每集 URL）",
+        example: "/api/site/videos/348",
+        tryable: true,
+      },
+      {
+        method: "GET",
+        path: "/api/site/videos/{id}/related",
+        summary: "同分类推荐",
+        params: [{ name: "limit", type: "int", default: "12", note: "1–40" }],
+        example: "/api/site/videos/348/related",
+        tryable: true,
+      },
+      {
+        method: "GET",
+        path: "/api/site/pic/{image_id}",
+        summary: "公开海报端点：本地文件，未下载则 302 到原 URL",
+        example: "/api/site/pic/803",
+        tryable: true,
+      },
+    ],
+  },
+  {
     title: "其他",
     endpoints: [
       {
@@ -545,8 +604,14 @@ const GROUPS: Group[] = [
       {
         method: "GET",
         path: "/",
-        summary: "后台界面（静态 SPA）",
+        summary: "前台影视库（静态 SPA，`/video/{id}` 深链接同样可用）",
         example: "/",
+      },
+      {
+        method: "GET",
+        path: "/admin",
+        summary: "管理后台（静态 SPA）",
+        example: "/admin",
       },
     ],
   },

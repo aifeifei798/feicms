@@ -29,7 +29,8 @@
 | 源订阅 | 注册「资源站列表 feed」（JSON 或 TXT），定时同步，站点列表自动增删 |
 | 海报本地化 | `vod_pic` 图片下载到本地，按内容 hash 分桶存储，见 [第 6 节](#6-海报图片本地化目录分桶策略) |
 | 对外提供 | `GET /provide/vod` 输出标准资源站格式，下游 CMS 可以直接采集 |
-| 管理面板 | React + Vite + Tailwind + DaisyUI：站点 CRUD、批量导入/导出站点、采集、健康、影片搜索、图片库、任务历史、自动任务开关、备份导出、管理员账号、API key、MCP 工具试跑、配置 |
+| 前台浏览 | 深色影院风的前台站点（`/`）：搜索、分类、海报墙、影片详情 + 内嵌播放器 + 剧集列表，只读，不需要登录 |
+| 管理面板 | React + Vite + Tailwind + DaisyUI（`/admin`）：站点 CRUD、批量导入/导出站点、采集、健康、影片搜索、图片库、任务历史、自动任务开关、备份导出、管理员账号、API key、MCP 工具试跑、配置 |
 
 技术栈：Python 3.10+ / FastAPI / SQLAlchemy 2.0 (async) / `curl_cffi`（浏览器 TLS 指纹） / `lxml` / typer + rich；前端 React 18 + Vite 5 + Tailwind 4 + DaisyUI 5。
 
@@ -72,7 +73,8 @@ cd web && pnpm install && pnpm run build     # 产物 web/dist，由 FastAPI 挂
 
 打开：
 
-- `http://localhost:8000/` — 管理面板（需要登录，见第 9 节）
+- `http://localhost:8000/` — 前台影视库（公开浏览，无需登录）
+- `http://localhost:8000/admin` — 管理面板（需要登录，见第 10 节）
 - `http://localhost:8000/docs` — OpenAPI 交互式文档
 - `http://localhost:8000/api/stats` — 总览统计
 
@@ -331,6 +333,22 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | GET / POST | `/mcp` | MCP server（JSON-RPC：`initialize` / `tools/list` / `tools/call`） |
 | GET | `/docs` · `/openapi.json` | OpenAPI 文档 |
 
+### 前台公开接口（`/api/site`）
+
+前台站点 `/` 只用这几个只读端点，不碰站点、采集、配置：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/site/stats` | 影片数 / 启用站点数 / 本地海报数 / 最近更新时间 |
+| GET | `/api/site/filters` | 分类（带计数）、年份、地区 |
+| GET | `/api/site/videos` | 列表：`q, type_name, year, sort(updated\|name\|source_count), limit, offset` |
+| GET | `/api/site/videos/{id}` | 详情 + 全部播放源（含每集 URL） |
+| GET | `/api/site/videos/{id}/related` | 同分类推荐 |
+| GET | `/api/site/pic/{image_id}` | 本地海报，未下载则 302 到原 URL |
+
+默认**公开**（`FEICMS_PUBLIC_SITE=true`）。设成 `false` 后这些端点同样要求登录/API key，前台页面也就只能管理员看。
+`/`、`/video/{id}`、`/admin` 这类深链接由 SPA 兜底路由处理（真实静态文件优先，其余返回 `index.html`）。
+
 ---
 
 ## 8. 配置（`.env`）
@@ -368,6 +386,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_SECRET` | （空） | token 签名密钥，留空则由 user+password 派生 |
 | `FEICMS_TOKEN_TTL` | 86400 | token 有效期（秒） |
 | `FEICMS_PUBLIC_PROVIDE` | true | `/provide/vod` 是否允许匿名访问 |
+| `FEICMS_PUBLIC_SITE` | true | 前台影视库（`/` 与 `/api/site/*`）是否公开；`false` 则前台也要登录 |
 
 ---
 
@@ -420,11 +439,13 @@ FEICMS_ADMIN_PASSWORD=改成强密码
 FEICMS_SECRET=可选：token 签名密钥（留空则由 user+password 派生）
 FEICMS_TOKEN_TTL=86400
 FEICMS_PUBLIC_PROVIDE=true
+FEICMS_PUBLIC_SITE=true
 ```
 
 启用后：
 
 - 所有 `/api/*` 与 `/images/*` 需要登录，未登录返回 `401`；
+- 前台影视库（`/` 与 `/api/site/*`）仍然公开，除非设 `FEICMS_PUBLIC_SITE=false`；
 - 管理面板打开时显示登录页，登录成功后写入 HttpOnly cookie，海报 `<img>` 也能正常加载；
 - 三种认证方式都支持：
 

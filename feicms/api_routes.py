@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import func, select
 
 from .apikeys import create_api_key, delete_api_key, list_api_keys, update_api_key
@@ -73,6 +73,15 @@ from .subscribe import detect_kind, ensure_default_subscriptions, sync_all, sync
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 auth_router = APIRouter(prefix="/api")  # login/status stay reachable without a token
 keys_router = APIRouter(prefix="/api", dependencies=[Depends(require_admin)])  # only the admin account
+
+MEDIA_TYPES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+}
 
 
 # --------------------------------------------------------------------------- auth
@@ -952,3 +961,155 @@ async def provide_vod(
                 }
             )
     return {"code": 1, "msg": "数据列表", "page": pg, "pagecount": pagecount, "limit": limit, "total": total, "list": out}
+
+
+# ---------------------------------------------------------------- public front site
+# Read-only endpoints for the browsing front end served at `/`. Nothing here can
+# reach sources, collection, images queue or configuration - it only exposes the
+# library. Turn it off with FEICMS_PUBLIC_SITE=false to require a login too.
+site_router = APIRouter(
+    prefix="/api/site",
+    dependencies=[Depends(require_auth)] if not settings.public_site else [],
+)
+
+
+def _site_pic(video: Video, pic_map: dict[str, int]) -> str | None:
+    image_id = pic_map.get(normalize_image_url(video.pic) or "")
+    return f"/api/site/pic/{image_id}" if image_id else None
+
+
+def _summary(video: Video, pic_map: dict[str, int]) -> VideoSummary:
+    return VideoSummary(
+        id=video.id,
+        name=video.name,
+        type_name=video.type_name,
+        year=video.year,
+        pic=video.pic,
+        local_pic=_site_pic(video, pic_map),
+        remarks=video.remarks,
+        source_count=video.source_count,
+        last_updated=video.last_updated,
+    )
+
+
+@site_router.get("/stats")
+async def site_stats() -> dict[str, Any]:
+    async with session() as s:
+        videos = await s.scalar(select(func.count(Video.id)))
+        sources = await s.scalar(select(func.count(Source.id)).where(Source.enabled))
+        posters = await s.scalar(
+            select(func.count(Image.id)).where(Image.status.in_(("downloaded", "duplicate")))
+        )
+        latest = await s.scalar(select(func.max(Video.last_updated)))
+    return {
+        "videos": videos or 0,
+        "sources": sources or 0,
+        "posters": posters or 0,
+        "last_updated": latest.isoformat() if latest else None,
+    }
+
+
+@site_router.get("/filters")
+async def site_filters() -> dict[str, Any]:
+    """Categories, years and regions present in the library, with counts."""
+    async with session() as s:
+        types = [
+            {"type_name": name or "未分类", "count": count}
+            for name, count in await s.execute(
+                select(Video.type_name, func.count(Video.id))
+                .group_by(Video.type_name)
+                .order_by(func.count(Video.id).desc())
+            )
+        ]
+        years = [
+            year
+            for year in await s.scalars(
+                select(Video.year).where(Video.year != "").group_by(Video.year).order_by(Video.year.desc())
+            )
+        ]
+        areas = [
+            area
+            for area in await s.scalars(
+                select(Video.area).where(Video.area != "").group_by(Video.area).order_by(Video.area)
+            )
+        ]
+    return {"types": types, "years": years, "areas": areas}
+
+
+@site_router.get("/videos")
+async def site_videos(
+    q: str | None = None,
+    type_name: str | None = None,
+    year: str | None = None,
+    sort: str = Query("updated", pattern="^(updated|name|source_count)$"),
+    limit: int = Query(24, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> Page:
+    async with session() as s:
+        stmt = select(Video)
+        if q:
+            stmt = stmt.where(Video.name.like(f"%{q}%"))
+        if type_name:
+            stmt = stmt.where(Video.type_name == type_name)
+        if year:
+            stmt = stmt.where(Video.year == year)
+
+        total = await s.scalar(select(func.count()).select_from(stmt.subquery()))
+        order = {
+            "updated": Video.last_updated.desc(),
+            "name": Video.name,
+            "source_count": Video.source_count.desc(),
+        }
+        videos = list(await s.scalars(stmt.order_by(order[sort]).limit(limit).offset(offset)))
+        pic_map = await _local_pic_map(s, [v.pic for v in videos])
+        return Page(
+            total=total,
+            page=offset // limit + 1,
+            limit=limit,
+            items=[_summary(v, pic_map) for v in videos],
+        )
+
+
+@site_router.get("/videos/{video_id}", response_model=VideoOut)
+async def site_video(video_id: int) -> VideoOut:
+    async with session() as s:
+        video = await s.get(Video, video_id)
+        if video is None:
+            raise HTTPException(404, "video not found")
+        items = list(await s.scalars(select(SourceItem).where(SourceItem.video_id == video_id)))
+        pic_map = await _local_pic_map(s, [video.pic])
+        return _video_out(video, items, _site_pic(video, pic_map))
+
+
+@site_router.get("/videos/{video_id}/related")
+async def site_related(video_id: int, limit: int = Query(12, ge=1, le=40)) -> list[VideoSummary]:
+    """Same category, most recently updated, excluding the video itself."""
+    async with session() as s:
+        video = await s.get(Video, video_id)
+        if video is None:
+            raise HTTPException(404, "video not found")
+        stmt = select(Video).where(Video.id != video_id)
+        if video.type_name:
+            stmt = stmt.where(Video.type_name == video.type_name)
+        videos = list(await s.scalars(stmt.order_by(Video.source_count.desc(), Video.last_updated.desc()).limit(limit)))
+        pic_map = await _local_pic_map(s, [v.pic for v in videos])
+        return [_summary(v, pic_map) for v in videos]
+
+
+@site_router.get("/pic/{image_id}", response_model=None)
+async def site_pic(image_id: int) -> FileResponse | RedirectResponse:
+    """Public poster endpoint. Falls back to the original remote URL when the
+    poster has not been downloaded yet."""
+    async with session() as s:
+        image = await s.get(Image, image_id)
+    if image is None:
+        raise HTTPException(404, "image not found")
+
+    path = Path(settings.image_dir) / image.path if image.path else None
+    if path and path.exists():
+        return FileResponse(
+            str(path),
+            media_type=MEDIA_TYPES.get(image.ext, "application/octet-stream"),
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    return RedirectResponse(image.url)

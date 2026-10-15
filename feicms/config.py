@@ -106,6 +106,10 @@ class Settings:
     token_ttl: int = _env_int("FEICMS_TOKEN_TTL", 24 * 3600)
     # /provide/vod is the feed a downstream CMS collects; keep it open by default.
     public_provide: bool = _env_bool("FEICMS_PUBLIC_PROVIDE", True)
+    # The public browsing front end (`/`) reads /api/site/* which is read-only:
+    # it can never touch sources, collection or configuration. Set false to make
+    # the front site require a login/API key as well.
+    public_site: bool = _env_bool("FEICMS_PUBLIC_SITE", True)
 
     settings: dict = field(default_factory=dict)
 
