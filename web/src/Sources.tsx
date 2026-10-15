@@ -3,6 +3,7 @@ import {
   api,
   downloadFile,
   type CollectProgress,
+  type HealthReport,
   type Source,
   type SourceImportResult,
   type Subscription,
@@ -28,6 +29,8 @@ export default function Sources({ notify }: { notify: Notify }) {
   const [creating, setCreating] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [progress, setProgress] = React.useState<CollectProgress | null>(null);
+  const [checking, setChecking] = React.useState(false);
+  const [report, setReport] = React.useState<HealthReport | null>(null);
 
   React.useEffect(() => {
     api.collectProgress().then(setProgress).catch(() => undefined);
@@ -96,6 +99,24 @@ export default function Sources({ notify }: { notify: Notify }) {
     }
   };
 
+  const runHealthCheck = async () => {
+    setChecking(true);
+    try {
+      const r = await api.healthCheck();
+      setReport(r);
+      const slowest = r.results.reduce((a, b) => Math.max(a, b.latency_ms), 0);
+      notify(
+        `健康检查：${r.ok} 正常 / ${r.dead} 不可用（共 ${r.checked} 个站点，最慢 ${slowest} ms）`,
+        r.dead ? "error" : "success"
+      );
+      load();
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const remove = async (s: Source) => {
     if (!confirm(`删除 ${s.name}？该站点的所有采集记录也会被清理。`)) return;
     await api.deleteSource(s.id);
@@ -136,12 +157,20 @@ export default function Sources({ notify }: { notify: Notify }) {
         <button className="btn btn-sm btn-outline" onClick={collectAllSources} disabled={busy || progress?.running}>
           {busy || progress?.running ? "采集中…" : "采集全部"}
         </button>
+        <button className="btn btn-sm btn-outline" onClick={runHealthCheck} disabled={checking}>
+          {checking ? "检查中…" : "健康检查"}
+        </button>
         <span className="muted">{sources.length} 个站点</span>
         {progress && (
           <span className="muted">
             {progress.running ? "进度" : "上次采集"} {progress.done_sources}/{progress.total_sources} · 新增
             {progress.inserted} · 更新 {progress.updated}
             {progress.failed_sources ? ` · ${progress.failed_sources} 失败` : ""}
+          </span>
+        )}
+        {report && (
+          <span className="muted">
+            健康 {report.ok} ok / {report.dead} dead（共 {report.checked} 个站点）
           </span>
         )}
       </div>

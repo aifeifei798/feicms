@@ -142,31 +142,6 @@ export default function App() {
     }
   };
 
-  const collectAll = () => {
-    if (collect?.running) {
-      notify("采集正在进行中，请稍候");
-      return;
-    }
-    api
-      .collectStart()
-      .then((state) => {
-        setCollect(state);
-        if (state.error) notify(`采集失败：${state.error}`, "error");
-        else notify(`采集已启动：${state.total_sources} 个站点，后台进行中`);
-      })
-      .catch((e) => notify((e as Error).message, "error"));
-  };
-
-  const checkHealth = () => {
-    api
-      .healthCheck()
-      .then((r) => {
-        notify(`健康检查：${r.ok} 正常 / ${r.dead} 不可用`, r.dead ? "error" : "success");
-        refreshStats();
-      })
-      .catch((e) => notify((e as Error).message, "error"));
-  };
-
   const checked = stats ? stats.by_source.filter((s) => s.health !== "unknown").length : 0;
   const healthRatio = checked > 0 ? stats!.healthy_sources / checked : null;
   const statusTone = healthRatio === null ? "unknown" : healthRatio >= 0.8 ? "ok" : healthRatio >= 0.5 ? "warn" : "bad";
@@ -217,10 +192,6 @@ export default function App() {
         )}
 
         <div className="nav-actions">
-          <button className="btn btn-sm btn-primary" onClick={collectAll} disabled={collect?.running}>
-            {collect?.running ? "采集中…" : "采集全部"}
-          </button>
-          <button className="btn btn-sm btn-outline" onClick={checkHealth}>健康检查</button>
           <ThemePicker theme={theme} setTheme={setTheme} />
           {auth?.auth_required && (
             <div className="user-chip">
