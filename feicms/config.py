@@ -72,7 +72,6 @@ class Settings:
     image_concurrency: int = _env_int("FEICMS_IMAGE_CONCURRENCY", 8)
     image_delay: float = float(_env("FEICMS_IMAGE_DELAY", "0.15"))
     image_max_size: int = _env_int("FEICMS_IMAGE_MAX_SIZE", 2_000_000)
-    image_max_attempts: int = _env_int("FEICMS_IMAGE_MAX_ATTEMPTS", 3)
     image_auto: bool = _env_bool("FEICMS_IMAGE_AUTO", True)
     image_interval_minutes: int = _env_int("FEICMS_IMAGE_INTERVAL", 30)
     auto_collect: bool = _env_bool("FEICMS_AUTO_COLLECT", True)

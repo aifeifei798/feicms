@@ -194,9 +194,8 @@ export default function Images({ notify }: { notify: Notify }) {
         </button>
       </div>
       <p className="muted mt-1">
-        「下载一批」只排队 <span className="mono">待下载</span> 的图片：已下载、重复、以及失败超过
-        <span className="mono">FEICMS_IMAGE_MAX_ATTEMPTS</span> 次的都不会再请求；磁盘上已有文件但索引状态不对的行会被自动修正，
-        不会重新下载。失败项不会自动重试，要重试点「重试失败的」。
+        「下载一批」只排队 <span className="mono">待下载</span> 的图片：已下载、重复、失败的都不会再请求；
+        磁盘上已有文件但索引状态不对的行会被自动修正，不会重新下载。失败项不会自动重试，要重试点「重试失败的」。
       </p>
 
       <div className="card bg-base-100 border border-base-300 mt-3">

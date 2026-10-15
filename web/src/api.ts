@@ -372,7 +372,6 @@ export interface Config {
   image_concurrency: number;
   image_delay: number;
   image_max_size: number;
-  image_max_attempts: number;
   image_auto: boolean;
   image_interval_minutes: number;
   auto_collect: boolean;

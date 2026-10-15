@@ -739,7 +739,6 @@ async def config() -> dict[str, Any]:
         "image_concurrency": settings.image_concurrency,
         "image_delay": settings.image_delay,
         "image_max_size": settings.image_max_size,
-        "image_max_attempts": settings.image_max_attempts,
         "image_auto": settings.image_auto,
         "image_interval_minutes": settings.image_interval_minutes,
         "host": settings.host,

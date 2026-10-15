@@ -196,8 +196,8 @@ async def download_images(
     Only rows still marked `pending` are queued: posters already downloaded,
     duplicates, and failures are left alone. Rows whose file is already on disk
     but whose index status is stale are repaired in place instead of re-fetched.
-    `include_failed=True` pulls failed rows back into the queue (up to
-    FEICMS_IMAGE_MAX_ATTEMPTS attempts in total).
+    `include_failed=True` pulls failed rows back into the queue (the attempt
+    counter is kept, so you can see how many times a poster has been tried).
 
     Two batches in the same process never overlap (the auto loop and a manual
     "download now" click would otherwise race over the same pending rows).
@@ -233,10 +233,7 @@ async def _download_batch(
         # downloaded, marked duplicate, or failed are never picked up unless the
         # caller explicitly asked to retry failures.
         if include_failed:
-            stmt = select(Image).where(
-                Image.status.in_(("pending", "failed")),
-                Image.attempts < settings.image_max_attempts,
-            )
+            stmt = select(Image).where(Image.status == "failed")
         else:
             stmt = select(Image).where(Image.status == "pending")
         candidates = list(await s.scalars(stmt.order_by(Image.id).limit(batch * 3)))
@@ -256,8 +253,8 @@ async def _download_batch(
                 repaired += 1
                 continue
             if row.status == "failed":
-                # Explicit retry requested: put it back in the queue, the attempt
-                # counter is kept so permanently dead URLs stop being retried.
+                # Explicit retry requested: put it back in the queue. The attempt
+                # counter is kept so the list shows how many times it has failed.
                 row.status = "pending"
             pending.append(row)
 
