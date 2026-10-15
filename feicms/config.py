@@ -72,6 +72,9 @@ class Settings:
     # auto-collect never walk the same database at the same time.
     lock_file: str = _env("FEICMS_LOCK_FILE", str(BASE_DIR / "data" / "collect.lock"))
     lock_ttl_hours: float = float(_env("FEICMS_LOCK_TTL", "12"))
+    # Live snapshot of a running sweep so `./server.sh full-status` can show
+    # progress without tailing the log.
+    status_file: str = _env("FEICMS_STATUS_FILE", str(BASE_DIR / "data" / "collect_status.json"))
 
     # Images (vod_pic posters). Files are sharded by sha256 of the image bytes:
     #   <image_dir>/<sha[0:2]>/<sha[2:4]>/<sha>.<ext>

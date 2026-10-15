@@ -195,7 +195,7 @@ def collect(
         None, "--concurrency", help="override FEICMS_CONCURRENCY for this run (0 = every source at once)"
     ),
     delay: float = typer.Option(None, "--delay", help="override FEICMS_DELAY: seconds between page requests"),
-    heartbeat: int = typer.Option(50, "--heartbeat", help="print a progress line every N pages (0 = off)"),
+    heartbeat: int = typer.Option(20, "--heartbeat", help="print a progress line every N pages (0 = off)"),
 ) -> None:
     """Run collection now (all enabled sources, or one by --name).
 
@@ -212,19 +212,57 @@ def collect(
         names = [name] if name else None
         effective_pages = 0 if full else pages
 
+        started_at = datetime.now(timezone.utc)
+        live: dict[int, dict[str, Any]] = {}
+        finished: list[dict[str, Any]] = []
+        status_path = Path(settings.status_file)
+
+        def write_status() -> None:
+            payload = {
+                "started_at": started_at.isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "total_sources": len(live),
+                "done_sources": len(finished),
+                "pages": sum(s.get("pages", 0) for s in live.values()),
+                "inserted": sum(s.get("inserted", 0) for s in live.values()),
+                "updated": sum(s.get("updated", 0) for s in live.values()),
+                "skipped": sum(s.get("skipped", 0) for s in live.values()),
+                "sources": sorted(live.values(), key=lambda s: s.get("pages", 0), reverse=True),
+                "finished": finished,
+            }
+            try:
+                status_path.parent.mkdir(parents=True, exist_ok=True)
+                status_path.write_text(json.dumps(payload, ensure_ascii=False))
+            except OSError:
+                pass
+
         def on_progress(source_id: int, snap: dict[str, Any]) -> None:
-            if not heartbeat or not snap.get("pages"):
-                return
-            if snap["pages"] % heartbeat:
-                return
-            total = snap.get("pagecount") or "?"
-            console.print(
-                f"[dim]进度 {snap.get('name', source_id)}: {snap['pages']}/{total} 页 "
-                f"(新增 {snap.get('inserted', 0)}, 更新 {snap.get('updated', 0)})[/dim]"
+            entry = live.setdefault(source_id, {"source_id": source_id, "name": snap.get("name", source_id)})
+            entry.update(
+                {
+                    "pages": snap.get("pages", 0),
+                    "pagecount": snap.get("pagecount", 0),
+                    "target": snap.get("target", 0),
+                    "inserted": snap.get("inserted", 0),
+                    "updated": snap.get("updated", 0),
+                    "skipped": snap.get("skipped", 0),
+                }
             )
+            if entry["pages"] == 0:
+                console.print(f"[dim]开始 {entry['name']}[/dim]")
+                write_status()
+                return
+            if not heartbeat or entry["pages"] % heartbeat:
+                return
+            total = entry["pagecount"] or "?"
+            console.print(
+                f"[dim]进度 {entry['name']}: {entry['pages']}/{total} 页 "
+                f"(新增 {entry['inserted']}, 更新 {entry['updated']})[/dim]"
+            )
+            write_status()
 
         def on_result(r: CollectResult) -> None:
-            status = "OK" if not (r.error or r.stopped_reason) else "FAIL"
+            status = "done" if not (r.error or r.stopped_reason) else "failed"
             scope = f"{r.pages}/{r.pagecount or '?'}页"
             note = r.error or r.stopped_reason or ""
             if r.warnings:
@@ -233,6 +271,25 @@ def collect(
                 f"[{status}] {r.source_name}: {scope} new={r.inserted} updated={r.updated} "
                 f"skipped={r.skipped} total={r.total} {r.elapsed_ms / 1000:.1f}s {note}"
             )
+            live[source_id] = {
+                "source_id": r.source_id,
+                "name": r.source_name,
+                "pages": r.pages,
+                "pagecount": r.pagecount,
+                "inserted": r.inserted,
+                "updated": r.updated,
+                "skipped": r.skipped,
+                "status": status,
+                "note": note,
+            }
+            finished.append({"name": r.source_name, "status": status, "note": note})
+            write_status()
+
+        console.print(
+            f"[green]采集开始[/green] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
+            f"{'全量（每站真实页数）' if effective_pages == 0 else f'{effective_pages or settings.default_pages} 页/站'}"
+        )
+        write_status()
 
         results = await collect_all(
             names=names,

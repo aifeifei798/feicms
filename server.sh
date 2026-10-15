@@ -31,6 +31,7 @@ LOG_FILE="$ROOT/data/server.log"
 COLLECT_LOG="$ROOT/data/collect.log"
 COLLECT_PID="$ROOT/data/collect.pid"
 COLLECT_LOCK="$ROOT/data/collect.lock"
+COLLECT_STATUS="$ROOT/data/collect_status.json"
 
 load_env() {
   if [ -f "$ROOT/.env" ]; then
@@ -302,9 +303,9 @@ cmd_full() {
     args="$args $(printf '%q' "$a")"
   done
   if command -v setsid >/dev/null 2>&1; then
-    setsid nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
+    PYTHONUNBUFFERED=1 setsid nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
   else
-    nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
+    PYTHONUNBUFFERED=1 nohup bash -c "$cmd collect --full$args" >> "$COLLECT_LOG" 2>&1 &
   fi
   echo $! > "$COLLECT_PID"
   echo "全量扫描已启动 (pid $!)，日志: $COLLECT_LOG"
@@ -328,6 +329,30 @@ cmd_full_status() {
     echo "锁: $(cat "$COLLECT_LOCK")"
   else
     echo "锁已释放（本轮已结束）"
+  fi
+  if [ -f "$COLLECT_STATUS" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$COLLECT_STATUS" <<'PY'
+import json, sys
+
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as exc:
+    print(f"状态文件读取失败: {exc}")
+    raise SystemExit(0)
+
+print(f"进度: {d.get('done_sources', 0)}/{d.get('total_sources', 0)} 个站点完成，"
+      f"共 {d.get('pages', 0)} 页，新增 {d.get('inserted', 0)}，更新 {d.get('updated', 0)}，"
+      f"跳过 {d.get('skipped', 0)} 条重复")
+sources = d.get("sources", [])
+if sources:
+    print("各站点（按已采集页数）：")
+    for s in sources[:25]:
+        total = s.get("pagecount") or "?"
+        note = s.get("note") or ""
+        print(f"  {s['name']}: {s.get('pages', 0)}/{total} 页  新增 {s.get('inserted', 0)} 更新 {s.get('updated', 0)} {note}")
+    if len(sources) > 25:
+        print(f"  ... 其余 {len(sources) - 25} 个站点见 {sys.argv[1]}")
+PY
   fi
   if [ -f "$COLLECT_LOG" ]; then
     echo "最近 20 行 ($COLLECT_LOG):"
