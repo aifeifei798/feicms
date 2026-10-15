@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import tempfile
+
+os.environ.setdefault("FEICMS_DB", f"sqlite+aiosqlite:///{tempfile.mkdtemp()}/collector.db")
+os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
+
+from sqlalchemy import select  # noqa: E402
+
+from feicms.collector import collect_source  # noqa: E402
+from feicms.db import init_db, session  # noqa: E402
+from feicms.fetcher import FetchResult  # noqa: E402
+from feicms.models import Source  # noqa: E402
+
+
+class StubClient:
+    """Fake 资源站: `pagecount` pages of `per_page` items, nothing beyond that."""
+
+    def __init__(self, pagecount: int, per_page: int) -> None:
+        self.pagecount = pagecount
+        self.per_page = per_page
+
+    async def get(self, url: str) -> FetchResult:
+        page = int(re.search(r"pg=(\d+)", url).group(1))
+        if page > self.pagecount:
+            payload: dict[str, object] = {"code": 1, "list": [], "pagecount": self.pagecount, "total": self.pagecount * self.per_page}
+        else:
+            start = (page - 1) * self.per_page
+            payload = {
+                "code": 1,
+                "pagecount": self.pagecount,
+                "total": self.pagecount * self.per_page,
+                "list": [
+                    {
+                        "vod_id": i,
+                        "vod_name": f"影片 {i}",
+                        "type_name": "电影",
+                        "vod_time": "2026-01-01 00:00:00",
+                        "vod_play_from": "web",
+                        "vod_play_url": f"第1集$https://example.com/{i}.mp4",
+                    }
+                    for i in range(start + 1, start + self.per_page + 1)
+                ],
+            }
+        return FetchResult(json.dumps(payload), 200, 5.0, "stub")
+
+    async def aclose(self) -> None:
+        pass
+
+
+async def _make_source(name: str, max_pages: int) -> Source:
+    await init_db()
+    async with session() as s:
+        src = await s.scalar(select(Source).where(Source.name == name))
+        if src is None:
+            src = Source(name=name, url="https://stub.example.com/api.php/provide/vod/", max_pages=max_pages)
+            s.add(src)
+            await s.flush()
+        return src
+
+
+def test_full_sweep_walks_every_page():
+    async def _run() -> None:
+        src = await _make_source("全量测试站", max_pages=5)
+        result = await collect_source(src, pages=0, client=StubClient(pagecount=4, per_page=10))
+        assert result.pages == 4
+        assert result.pagecount == 4
+        assert result.total == 40
+        assert result.inserted == 40
+
+    asyncio.run(_run())
+
+
+def test_explicit_pages_are_respected():
+    async def _run() -> None:
+        src = await _make_source("页数测试站", max_pages=5)
+        result = await collect_source(src, pages=2, client=StubClient(pagecount=4, per_page=10))
+        assert result.pages == 2
+        assert result.inserted == 20
+
+    asyncio.run(_run())
+
+
+def test_incremental_run_stops_when_nothing_changes():
+    async def _run() -> None:
+        src = await _make_source("增量测试站", max_pages=5)
+        client = StubClient(pagecount=4, per_page=10)
+
+        # First pass grabs everything the stub has.
+        first = await collect_source(src, pages=0, client=client)
+        assert first.pages == 4
+        assert first.inserted == 40
+
+        # Second pass: page 1 is all duplicates, page 2 too -> stop at page 2
+        # instead of walking all 4 pages again.
+        second = await collect_source(src, pages=5, client=client)
+        assert second.pages == 2
+        assert second.inserted == 0
+        assert second.skipped >= 20
+
+    asyncio.run(_run())

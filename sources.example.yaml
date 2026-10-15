@@ -1,0 +1,24 @@
+# feicms 站点列表模板
+# 复制为 sources.yaml 后填入你自己的站点（仓库不附带真实列表）。
+# 也可以用: feicms add <name> <url>  或  feicms subscribe --sync 自动同步。
+sources:
+  - name: 示例资源站
+    url: https://example.com/api.php/provide/vod/
+    api_format: json          # json | xml | auto
+    enabled: true
+    priority: 1000
+    max_pages: 5
+    tags: general
+    uptime: 99.9
+
+  - name: 示例 XML 站点
+    url: https://example.org/api.php/provide/vod/at/xml/
+    api_format: xml
+    enabled: false
+    priority: 500
+    max_pages: 3
+    tags: test
+
+# 也支持一行式简写：
+# sources:
+#   - "名称|https://example.com/api.php/provide/vod/|json|99.9"

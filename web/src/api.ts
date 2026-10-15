@@ -1,0 +1,274 @@
+export interface Source {
+  id: number;
+  name: string;
+  url: string;
+  api_format: string;
+  enabled: boolean;
+  priority: number;
+  max_pages: number;
+  tags: string;
+  uptime: number;
+  origin: string;
+  subscription_url: string;
+  health_status: string;
+  latency_ms: number | null;
+  last_collect_at: string | null;
+  last_health_at: string | null;
+  last_error: string | null;
+  fail_streak: number;
+  item_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Episode {
+  name: string;
+  url: string;
+}
+
+export interface Play {
+  from_name: string;
+  episodes: Episode[];
+}
+
+export interface Video {
+  id: number;
+  name: string;
+  type_name: string;
+  year: string;
+  area: string;
+  lang: string;
+  pic: string;
+  local_pic?: string | null;
+  blurb: string;
+  actor: string;
+  director: string;
+  remarks: string;
+  source_count: number;
+  last_updated: string;
+  plays: Play[];
+}
+
+export interface VideoSummary {
+  id: number;
+  name: string;
+  type_name: string;
+  year: string;
+  pic: string;
+  local_pic?: string | null;
+  remarks: string;
+  source_count: number;
+  last_updated: string;
+}
+
+export interface Stats {
+  sources: number;
+  enabled_sources: number;
+  healthy_sources: number;
+  videos: number;
+  source_items: number;
+  last_collect_at: string | null;
+  by_source: { name: string; enabled: boolean; health: string; count: number }[];
+  by_type: { type_name: string; count: number }[];
+}
+
+export interface Job {
+  id: number;
+  source_id: number;
+  started_at: string;
+  finished_at: string | null;
+  pages: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  error: string | null;
+}
+
+export interface CollectResult {
+  source_id: number;
+  source_name: string;
+  pages: number;
+  pagecount: number;
+  total: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  error: string | null;
+  elapsed_ms: number;
+}
+
+export interface HealthReport {
+  checked: number;
+  ok: number;
+  dead: number;
+  results: {
+    source_id: number;
+    name: string;
+    ok: boolean;
+    latency_ms: number;
+    status_code: number;
+    items: number;
+    message: string;
+  }[];
+}
+
+export interface Page<T> {
+  total: number;
+  page: number;
+  limit: number;
+  items: T[];
+}
+
+export interface Subscription {
+  id: number;
+  url: string;
+  kind: string;
+  enabled: boolean;
+  last_sync_at: string | null;
+  last_added: number;
+  last_updated: number;
+  last_entries: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SyncResult {
+  subscription_id: number;
+  url: string;
+  entries: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  missing: string[];
+  error: string | null;
+  elapsed_ms: number;
+}
+
+export interface ImageRecord {
+  id: number;
+  url: string;
+  host: string;
+  status: string;
+  path: string;
+  ext: string;
+  sha256: string;
+  size_bytes: number;
+  attempts: number;
+  last_error: string | null;
+  first_seen: string;
+  downloaded_at: string | null;
+}
+
+export interface ImageStats {
+  image_dir: string;
+  total: number;
+  by_status: Record<string, number>;
+  bytes: number;
+  files_on_disk: number;
+  shards_used: number;
+  top_hosts: { host: string; count: number }[];
+}
+
+export interface ImageBatchResult {
+  attempted: number;
+  downloaded: number;
+  duplicates: number;
+  failed: number;
+  skipped: number;
+  bytes: number;
+  elapsed_ms: number;
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status} ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export interface Config {
+  database_url: string;
+  sources_file: string;
+  subscriptions: string[];
+  request_timeout: number;
+  impersonate: string;
+  request_delay: number;
+  user_agent: string;
+  concurrency: number;
+  max_retries: number;
+  default_pages: number;
+  page_limit: number;
+  full_page_cap: number;
+  image_dir: string;
+  image_batch: number;
+  image_concurrency: number;
+  image_delay: number;
+  image_max_size: number;
+  image_max_attempts: number;
+  image_auto: boolean;
+  image_interval_minutes: number;
+  auto_collect: boolean;
+  collect_interval_minutes: number;
+  health_interval_minutes: number;
+  subscribe_interval_minutes: number;
+  health_fail_threshold: number;
+  host: string;
+  port: number;
+}
+
+export const api = {
+  stats: () => request<Stats>("/api/stats"),
+  config: () => request<Config>("/api/config"),
+  sources: (params: Record<string, string | number | boolean> = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).map(([k, v]) => [k, String(v)])
+    ).toString();
+    return request<Source[]>(`/api/sources${qs ? `?${qs}` : ""}`);
+  },
+  createSource: (body: Partial<Source>) => request<Source>("/api/sources", { method: "POST", body: JSON.stringify(body) }),
+  updateSource: (id: number, body: Partial<Source>) =>
+    request<Source>(`/api/sources/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteSource: (id: number) => fetch(`/api/sources/${id}`, { method: "DELETE" }),
+  toggleSource: (id: number, enabled: boolean) =>
+    request<Source>(`/api/sources/${id}/enable`, { method: "POST", body: JSON.stringify({ enabled }) }),
+  collectOne: (id: number, pages?: number) =>
+    request<CollectResult>(
+      `/api/sources/${id}/collect${pages === undefined ? "" : `?pages=${pages}`}`,
+      { method: "POST" }
+    ),
+  collectAll: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
+    request<CollectResult[]>("/api/collect", { method: "POST", body: JSON.stringify(body) }),
+  healthCheck: () => request<HealthReport>("/api/health-check", { method: "POST" }),
+  videos: (params: Record<string, string | number>) => {
+    const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
+    return request<Page<VideoSummary>>(`/api/videos?${qs}`);
+  },
+  video: (id: number) => request<Video>(`/api/videos/${id}`),
+  videoSources: (id: number) => request<{ source_id: number; source_name: string; source_vod_id: number; play_from: string; vod_time: string; episodes: { from: string; episodes: Episode[] }[] }[]>(`/api/videos/${id}/sources`),
+  prune: () => request<{ removed: number }>("/api/prune", { method: "POST" }),
+  subscriptions: () => request<Subscription[]>("/api/subscriptions"),
+  createSubscription: (body: { url: string; kind?: string; enabled?: boolean }) =>
+    request<Subscription>("/api/subscriptions", { method: "POST", body: JSON.stringify(body) }),
+  deleteSubscription: (id: number) => fetch(`/api/subscriptions/${id}`, { method: "DELETE" }),
+  syncSubscriptions: (id?: number) =>
+    request<SyncResult[]>(`/api/subscriptions/sync${id ? `?subscription_id=${id}` : ""}`, { method: "POST" }),
+  categories: () => request<{ type_name: string; count: number }[]>("/api/categories"),
+  jobs: (limit = 50) => request<Job[]>(`/api/jobs?limit=${limit}`),
+  imageStats: () => request<ImageStats>("/api/images/stats"),
+  imageScan: () => request<{ queued: number; seen: number }>("/api/images/scan", { method: "POST" }),
+  imageDownload: (body: { limit?: number; concurrency?: number; retry_failed?: boolean } = {}) =>
+    request<ImageBatchResult>("/api/images/download", { method: "POST", body: JSON.stringify(body) }),
+  images: (params: Record<string, string | number> = {}) => {
+    const entries = Object.entries(params).map(([k, v]) => [k, String(v)]);
+    const qs = new URLSearchParams(entries).toString();
+    return request<ImageRecord[]>(`/api/images${qs ? `?${qs}` : ""}`);
+  },
+  imagePrune: (deleteFiles = true) => request<{ removed: number; files_deleted: number }>(`/api/images/prune?delete_files=${deleteFiles}`, { method: "POST" }),
+  imageRepair: () => request<{ restored: number; requeued: number; files_deleted: number }>("/api/images/repair", { method: "POST" }),
+};

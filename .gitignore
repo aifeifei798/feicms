@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 数据库 / 采集数据 / 图片
+data/
+*.db
+*.db-wal
+*.db-shm
+export.jsonl
+backup.jsonl
+
+# 资源站列表（不提交：站点域名与接口地址由使用者自己维护）
+sources.yaml
+sources.txt
+sources.json
+
+# 环境变量
+.env
+web/.env
+
+# 前端
+node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo

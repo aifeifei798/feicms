@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env (project root) if python-dotenv is available, so local and container
+# deployments can be configured the same way.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:  # pragma: no cover - optional dependency
+    pass
+
+
+def _env(name: str, default: str) -> str:
+    return os.environ.get(name, default)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@dataclass
+class Settings:
+    database_url: str = _env("FEICMS_DB", f"sqlite+aiosqlite:///{BASE_DIR / 'data' / 'feicms.db'}")
+    sources_file: str = _env("FEICMS_SOURCES", str(BASE_DIR / "sources.yaml"))
+    subscriptions: list[str] = field(
+        default_factory=lambda: [
+            url.strip()
+            for url in _env("FEICMS_SUBSCRIPTIONS", "").split(",")
+            if url.strip()
+        ]
+    )
+
+    # HTTP
+    request_timeout: float = float(_env("FEICMS_TIMEOUT", "20"))
+    impersonate: str = _env("FEICMS_IMPERSONATE", "chrome124")
+    request_delay: float = float(_env("FEICMS_DELAY", "0.3"))
+    user_agent: str = _env(
+        "FEICMS_UA",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0 Safari/537.36",
+    )
+    concurrency: int = _env_int("FEICMS_CONCURRENCY", 6)
+    max_retries: int = _env_int("FEICMS_RETRIES", 3)
+
+    # Collection
+    default_pages: int = _env_int("FEICMS_PAGES", 5)
+    page_limit: int = _env_int("FEICMS_PAGE_LIMIT", 40)
+    # Hard ceiling for a "full" sweep (pages=0): how many pages we are willing to
+    # walk through a single source before giving up.
+    full_page_cap: int = _env_int("FEICMS_FULL_PAGE_CAP", 200)
+
+    # Images (vod_pic posters). Files are sharded by sha256 of the image bytes:
+    #   <image_dir>/<sha[0:2]>/<sha[2:4]>/<sha>.<ext>
+    image_dir: str = _env("FEICMS_IMAGE_DIR", str(BASE_DIR / "data" / "images"))
+    image_batch: int = _env_int("FEICMS_IMAGE_BATCH", 300)
+    image_concurrency: int = _env_int("FEICMS_IMAGE_CONCURRENCY", 8)
+    image_delay: float = float(_env("FEICMS_IMAGE_DELAY", "0.15"))
+    image_max_size: int = _env_int("FEICMS_IMAGE_MAX_SIZE", 2_000_000)
+    image_max_attempts: int = _env_int("FEICMS_IMAGE_MAX_ATTEMPTS", 3)
+    image_auto: bool = _env_bool("FEICMS_IMAGE_AUTO", True)
+    image_interval_minutes: int = _env_int("FEICMS_IMAGE_INTERVAL", 30)
+    auto_collect: bool = _env_bool("FEICMS_AUTO_COLLECT", True)
+    collect_interval_minutes: int = _env_int("FEICMS_COLLECT_INTERVAL", 60)
+    health_interval_minutes: int = _env_int("FEICMS_HEALTH_INTERVAL", 30)
+    health_fail_threshold: int = _env_int("FEICMS_HEALTH_THRESHOLD", 3)
+    subscribe_interval_minutes: int = _env_int("FEICMS_SUBSCRIBE_INTERVAL", 1440)
+
+    # API
+    host: str = _env("FEICMS_HOST", "0.0.0.0")
+    port: int = _env_int("FEICMS_PORT", 8000)
+
+    settings: dict = field(default_factory=dict)
+
+
+settings = Settings()
