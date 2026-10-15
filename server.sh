@@ -17,6 +17,7 @@
 #   ./server.sh images scan|download|stats|repair|prune
 #   ./server.sh passwd [--user admin] [--password xxx]
 #   ./server.sh token          打印一个 API token（curl 用）
+#   ./server.sh systemd        打印 systemd 服务配置（开机自启）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -205,6 +206,30 @@ cmd_url() {
   print_urls
 }
 
+cmd_systemd() {
+  load_env
+  py="$ROOT/.venv/bin/uvicorn"
+  [ -x "$py" ] || py="$ROOT/.venv/bin/python"
+  cat <<EOF
+# /etc/systemd/system/feicms.service
+[Unit]
+Description=feicms 资源站聚合服务
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$ROOT
+ExecStart=$py feicms.api:app --host ${FEICMS_HOST:-0.0.0.0} --port ${FEICMS_PORT:-8000}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  echo
+  echo "保存后执行: sudo systemctl daemon-reload && sudo systemctl enable --now feicms"
+}
+
 cmd_logs() {
   if [ ! -f "$LOG_FILE" ]; then
     echo "没有日志文件（服务还没启动过）"
@@ -240,7 +265,7 @@ cmd_build() {
 }
 
 usage() {
-  sed -n '2,18p' "$0"
+  awk 'NR > 1 { if (substr($0, 1, 1) != "#") exit; print substr($0, 2) }' "$0"
 }
 
 command="${1:-help}"
@@ -262,6 +287,7 @@ case "$command" in
   images) run_py feicms images "$@" ;;
   passwd) run_py feicms passwd "$@" ;;
   token) run_py feicms token ;;
+  systemd) cmd_systemd ;;
   help|-h|--help) usage ;;
   *) echo "未知命令: $command"; usage; exit 1 ;;
 esac

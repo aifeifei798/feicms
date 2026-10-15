@@ -38,9 +38,9 @@
 ## 2. 快速开始
 
 ```bash
-./install.sh            # 建 venv + 装依赖 + 构建前端 + 生成 .env + init-db
-./server.sh start       # 后台启动，日志写到 data/server.log
+./install.sh            # 建 venv + 装依赖 + 构建前端 + 生成 .env + init-db + 自动启动
 ./server.sh status      # 运行状态 / 健康 / 是否开启登录
+./server.sh url         # 本机 + 局域网访问地址
 ```
 
 `install.sh` 会自动：
@@ -48,7 +48,8 @@
 1. 检查 Python 3.10+；有 `uv` 用 `uv sync`，没有则 `python3 -m venv .venv` + `pip install -r requirements.txt`；
 2. 构建前端（有 `pnpm` 用 pnpm，否则 `npm`；都没有则跳过，API 仍然可用）；
 3. 生成 `.env`（若不存在，从 `.env.example` 复制）并**随机生成管理员密码**；
-4. 复制 `sources.example.yaml` → `sources.yaml`（仓库不带真实站点列表，见第 3 节），建表并 seed。
+4. 复制 `sources.example.yaml` → `sources.yaml`（仓库不带真实站点列表，见第 3 节），建表并 seed；
+5. **启动服务**（后台，监听 `0.0.0.0:8000`，日志写到 `data/server.log`）。
 
 常用选项：
 
@@ -56,6 +57,8 @@
 ./install.sh --no-frontend     # 只装后端
 ./install.sh --mysql           # 额外安装 aiomysql
 ./install.sh --force-env       # 覆盖已有 .env（重新生成密码）
+./install.sh --no-start        # 安装后不自动启动
+./install.sh --systemd         # 注册 systemd 服务并开机自启（需要 root/sudo）
 ```
 
 手动安装（等价）：
@@ -300,9 +303,21 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh images scan|download|stats|repair|prune
 ./server.sh passwd --user admin --password 你的密码    # 改 .env 里的账号
 ./server.sh token              # 打印一个 API token（curl 用）
+./server.sh url                # 打印本机 + 局域网访问地址
+./server.sh systemd            # 打印 systemd 服务配置（开机自启）
 ```
 
 脚本优先用 `uv`，没有 `uv` 时回退到 `.venv/bin/...`；端口和 host 从 `.env` 读取。
+
+开机自启（Pi / 服务器）：
+
+```bash
+./install.sh --systemd                 # 自动写入 /etc/systemd/system/feicms.service 并 enable
+# 或手动：
+./server.sh systemd | sudo tee /etc/systemd/system/feicms.service
+sudo systemctl daemon-reload && sudo systemctl enable --now feicms
+systemctl status feicms                # 之后用 systemctl 管理，不要用 ./server.sh start
+```
 
 ---
 

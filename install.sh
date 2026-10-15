@@ -4,9 +4,10 @@
 #   2) 构建前端（pnpm，没有则 npm）
 #   3) 生成 .env（含管理员用户名/密码）
 #   4) 初始化数据库
+#   5) 启动服务（后台，监听 0.0.0.0）
 #
 # 用法:
-#   ./install.sh [--no-frontend] [--mysql] [--no-dev] [--force-env]
+#   ./install.sh [--no-frontend] [--mysql] [--no-dev] [--force-env] [--no-start]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +17,8 @@ WITH_WEB=true
 WITH_DEV=true
 WITH_MYSQL=false
 FORCE_ENV=false
+START_SERVICE=true
+SYSTEMD=false
 
 usage() {
   cat <<'EOF'
@@ -25,6 +28,8 @@ usage() {
   --no-dev        不装 pytest 等开发依赖
   --mysql         安装 MySQL 驱动 (aiomysql)
   --force-env     覆盖已有的 .env（会重新生成管理员密码）
+  --no-start      安装后不自动启动服务
+  --systemd       注册 systemd 服务并开机自启（需要 root/sudo）
   -h, --help      显示帮助
 EOF
 }
@@ -35,6 +40,8 @@ while [ $# -gt 0 ]; do
     --no-dev) WITH_DEV=false ;;
     --mysql) WITH_MYSQL=true ;;
     --force-env) FORCE_ENV=true ;;
+    --no-start) START_SERVICE=false ;;
+    --systemd) SYSTEMD=true ;;
     -h|--help) usage; exit 0 ;;
     *) echo "未知参数: $1"; usage; exit 1 ;;
   esac
@@ -148,8 +155,65 @@ fi
 run_py feicms init-db
 run_py feicms seed
 
+# ---------------------------------------------------------------- start
+step "启动服务"
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+if [ "$START_SERVICE" = true ]; then
+  if ./server.sh start; then
+    :
+  else
+    echo "自动启动失败，手动尝试: ./server.sh start（日志: data/server.log）"
+  fi
+else
+  echo "--no-start：跳过自动启动。启动命令: ./server.sh start"
+fi
+
+if [ "$SYSTEMD" = true ]; then
+  step "注册 systemd 服务（开机自启）"
+  UNIT="/etc/systemd/system/feicms.service"
+  SUDO=""
+  if [ "$(id -u)" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      SUDO="sudo"
+    else
+      echo "需要 root 权限，跳过 systemd 注册"
+      SYSTEMD=false
+    fi
+  fi
+  if [ "$SYSTEMD" = true ]; then
+    PY_BIN="$ROOT/.venv/bin/uvicorn"
+    [ -x "$PY_BIN" ] || PY_BIN="$ROOT/.venv/bin/python"
+    $SUDO tee "$UNIT" >/dev/null <<EOF
+[Unit]
+Description=feicms 资源站聚合服务
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$ROOT
+ExecStart=$PY_BIN feicms.api:app --host ${FEICMS_HOST:-0.0.0.0} --port ${FEICMS_PORT:-8000}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable feicms.service
+    echo "已注册 systemd 服务: $UNIT"
+    echo "  systemctl status feicms / journalctl -u feicms -f"
+    echo "注意：注册 systemd 后不要用 ./server.sh start（会重复启动）"
+  fi
+fi
+
 printf '\n\033[1m安装完成\033[0m\n'
-echo "启动服务:   ./server.sh start"
+echo "面板状态:   ./server.sh status"
+echo "查看日志:   ./server.sh logs -f"
 echo "默认监听:   0.0.0.0:${FEICMS_PORT:-8000}（局域网其它设备也能访问）"
 echo "本机面板:   http://127.0.0.1:${FEICMS_PORT:-8000}/"
 for ip in $(hostname -I 2>/dev/null); do
