@@ -36,7 +36,7 @@ const NAV: { key: View; label: string; group: string }[] = [
   { key: "sources", label: "资源站", group: "数据" },
   { key: "videos", label: "影片库", group: "数据" },
   { key: "images", label: "图片库", group: "数据" },
-  { key: "jobs", label: "采集记录", group: "数据" },
+  { key: "jobs", label: "采集进度", group: "数据" },
   { key: "api", label: "API 说明", group: "接入" },
   { key: "ai", label: "AI / MCP", group: "接入" },
   { key: "settings", label: "配置", group: "系统" },

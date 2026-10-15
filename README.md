@@ -137,7 +137,9 @@ GET  /api/sources/export?fmt=yaml|json|csv
 
 采集结果会打印 `采集页/总页 new= updated= skipped= total= 耗时`，并写入 `collect_jobs` 表用于审计。
 
-管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress` 显示「采集中 12/58 · 新增 …」。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
+管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress`。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
+
+「采集进度」页面（侧栏 数据 → 采集进度）显示总进度条 + 每个站点一行：状态（采集中 / 待采集 / 完成 / 失败）、本页进度条（已采页数 / 本次计划页数）、新增 / 更新 / 跳过 / 耗时。排序是采集中 → 待采集 → 完成 → 失败，所以正在跑的站点始终在最前面。失败站点只显示「失败」徽章，不列出错误文本（原始错误仍写入 `collect_jobs` 表，`GET /api/jobs` 可以查）。
 
 资源站列表按健康状态排序：`ok` → `slow` → 未检查 → `dead` → 已禁用，同组内再按 priority 降序。所以跑一轮健康检查后，不可用的站点会自动沉到列表底部（面板「资源站 → 健康检查」和 `feicms sources` 都是这个顺序）。
 
@@ -199,7 +201,7 @@ feicms serve [--host --port]
 | `seed` / `add` | 资源站 → 站点列表 → 批量导入 / 新增站点 | `POST /api/sources`, `POST /api/sources/import` |
 | `sources` / 启用禁用 | 资源站列表（筛选、开关、编辑、删除） | `GET /api/sources`, `PATCH /api/sources/{id}` |
 | — | 站点列表 → 导出 YAML / JSON / CSV | `GET /api/sources/export?fmt=` |
-| `collect` / `health` | 资源站 → 采集全部（实时进度）、健康检查 | `POST /api/collect/start`, `POST /api/health-check` |
+| `collect` / `health` | 资源站 → 采集全部、健康检查；采集进度 → 每站点进度条 | `POST /api/collect/start`, `GET /api/collect/progress`, `POST /api/health-check` |
 | `subscribe` | 资源站 → 源订阅 | `GET/POST/DELETE /api/subscriptions` |
 | `stats` | 首页总览 | `GET /api/stats` |
 | `prune` / `repair-plays` / `merge-duplicates` | 配置 → 数据维护 | `POST /api/prune` 等 |
@@ -271,7 +273,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | POST | `/api/sources/{id}/collect` | 立即采集该站点（`?pages=0` 全量） |
 | POST | `/api/collect` | 采集所有启用站点 `{pages, source_ids}`（同步；后台采集运行中返回 409） |
 | POST | `/api/collect/start` | 后台启动一轮采集，立即返回进度快照 |
-| GET | `/api/collect/progress` | 后台采集进度（running / done_sources / inserted / updated / failed_sources） |
+| GET | `/api/collect/progress` | 后台采集进度：总数 + 每个站点一条 `sources` 进度（status / pages / pagecount / target / inserted / updated / skipped / elapsed_ms） |
 | POST | `/api/health-check` | 探测所有站点 |
 | GET | `/api/videos` | 搜索：`q, type_name, year, source_id, sort, limit, offset` |
 | GET | `/api/videos/{id}` | 影片详情 + 全部播放源 |

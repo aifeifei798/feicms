@@ -227,7 +227,7 @@ const GROUPS: Group[] = [
       {
         method: "GET",
         path: "/api/collect/progress",
-        summary: "查看后台采集进度：running / total_sources / done_sources / inserted / updated / failed_sources",
+        summary: "查看后台采集进度：running / total_sources / done_sources / inserted / updated / skipped / failed_sources，以及每个站点一条 `sources` 进度（status、pages、pagecount、target、inserted、updated、skipped、elapsed_ms）",
         example: "curl http://127.0.0.1:8000/api/collect/progress",
       },
       {

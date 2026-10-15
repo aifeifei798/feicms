@@ -140,6 +140,36 @@ def test_background_sweep_reports_progress():
         assert state["error"] is None
         assert state["finished_at"]
 
+        entry = state["sources"][0]
+        assert entry["name"] == "后台测试站"
+        assert entry["status"] == "done"
+        assert entry["pages"] == 3
+        assert entry["pagecount"] == 3
+        assert entry["target"] == 5
+        assert entry["inserted"] == 30
+
+    asyncio.run(_run())
+
+
+def test_collect_all_reports_per_page_progress():
+    """The sweep publishes a snapshot per page so the panel can draw a bar."""
+
+    async def _run() -> None:
+        src = await _make_source("进度测试站", max_pages=5)
+        snapshots: list[tuple[int, dict]] = []
+        await collect_all(
+            source_ids=[src.id],
+            client_factory=lambda: StubClient(pagecount=3, per_page=10),
+            on_progress=lambda source_id, snap: snapshots.append((source_id, snap)),
+        )
+
+        assert snapshots[0][1]["target"] == 5
+        assert snapshots[0][1]["pages"] == 0
+        assert snapshots[-1][1]["pages"] == 3
+        assert snapshots[-1][1]["pagecount"] == 3
+        assert snapshots[-1][1]["inserted"] == 30
+        assert len(snapshots) == 4
+
     asyncio.run(_run())
 
 

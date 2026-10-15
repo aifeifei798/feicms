@@ -121,6 +121,39 @@ body {
   color: var(--text-dim);
 }
 
+/* 采集进度（每站点进度条） */
+.sweep-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.sweep-bar {
+  flex: 1 1 200px;
+  min-width: 160px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--brand) 18%, transparent);
+  overflow: hidden;
+}
+.sweep-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand);
+  transition: width 0.4s ease;
+}
+.source-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 170px;
+}
+.source-progress .progress-bar {
+  width: 110px;
+}
+
 .nav-actions {
   display: flex;
   align-items: center;

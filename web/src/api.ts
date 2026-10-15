@@ -97,6 +97,19 @@ export interface CollectResult {
   elapsed_ms: number;
 }
 
+export interface SourceProgress {
+  source_id: number;
+  name: string;
+  status: "pending" | "running" | "done" | "failed";
+  pages: number;
+  pagecount: number;
+  target: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  elapsed_ms: number;
+}
+
 export interface CollectProgress {
   running: boolean;
   started_at: string | null;
@@ -105,8 +118,10 @@ export interface CollectProgress {
   done_sources: number;
   inserted: number;
   updated: number;
+  skipped: number;
   failed_sources: number;
   error: string | null;
+  sources: SourceProgress[];
 }
 
 export interface MergeResult {

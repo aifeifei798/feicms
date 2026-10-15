@@ -184,6 +184,7 @@ async def collect_source(
     limit: int | None = None,
     stop_on_no_change: bool = True,
     client: Fetcher | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> CollectResult:
     own_client = client is None
     client = client or Fetcher()
@@ -199,6 +200,8 @@ async def collect_source(
         stop_on_no_change = False
     limit = limit or settings.page_limit
     started = time.perf_counter()
+    if on_progress is not None:
+        on_progress({"pages": 0, "pagecount": 0, "target": max_pages, "inserted": 0, "updated": 0, "skipped": 0})
 
     try:
         type_map = await load_type_map(client, source)
@@ -249,6 +252,16 @@ async def collect_source(
                     await asyncio.sleep(0.15 * (attempt + 1))
 
             result.pages = page
+            if on_progress is not None:
+                on_progress(
+                    {
+                        "pages": page,
+                        "pagecount": result.pagecount,
+                        "inserted": result.inserted,
+                        "updated": result.updated,
+                        "skipped": result.skipped,
+                    }
+                )
             if stop_on_no_change and page_changes == 0 and page > 1:
                 break
             if pagecount and page >= pagecount:
@@ -308,6 +321,7 @@ async def collect_all(
     only_enabled: bool = True,
     source_ids: list[int] | None = None,
     on_result: Callable[[CollectResult], None] | None = None,
+    on_progress: Callable[[int, dict[str, Any]], None] | None = None,
     client_factory: Callable[[], Fetcher] | None = None,
 ) -> list[CollectResult]:
     async with session() as s:
@@ -318,7 +332,8 @@ async def collect_all(
     async def run(src: Source) -> CollectResult:
         async with sem:
             client = client_factory() if client_factory is not None else None
-            result = await collect_source(src, pages=pages, client=client)
+            page_cb = (lambda snap: on_progress(src.id, snap)) if on_progress is not None else None
+            result = await collect_source(src, pages=pages, client=client, on_progress=page_cb)
             if on_result is not None:
                 on_result(result)
             return result
@@ -337,8 +352,10 @@ _collect_state: dict[str, Any] = {
     "done_sources": 0,
     "inserted": 0,
     "updated": 0,
+    "skipped": 0,
     "failed_sources": 0,
     "error": None,
+    "sources": [],
 }
 
 
@@ -358,16 +375,53 @@ async def start_collect_all(
     if _collect_state["running"]:
         return dict(_collect_state)
 
-    async def count() -> int:
+    async def prepare() -> list[Source]:
         async with session() as s:
-            return len(await _select_sources(s, names, only_enabled, source_ids))
+            return await _select_sources(s, names, only_enabled, source_ids)
+
+    sources = await prepare()
+    by_id: dict[int, dict[str, Any]] = {
+        src.id: {
+            "source_id": src.id,
+            "name": src.name,
+            "status": "pending",
+            "pages": 0,
+            "pagecount": 0,
+            "target": src.max_pages,
+            "inserted": 0,
+            "updated": 0,
+            "skipped": 0,
+            "elapsed_ms": 0,
+        }
+        for src in sources
+    }
+
+    def on_progress(source_id: int, snap: dict[str, Any]) -> None:
+        entry = by_id.get(source_id)
+        if entry is not None:
+            entry.update(snap)
+            entry["status"] = "running"
 
     def on_result(result: CollectResult) -> None:
         _collect_state["done_sources"] += 1
         _collect_state["inserted"] += result.inserted
         _collect_state["updated"] += result.updated
+        _collect_state["skipped"] += result.skipped
         if result.error:
             _collect_state["failed_sources"] += 1
+        entry = by_id.get(result.source_id)
+        if entry is not None:
+            entry.update(
+                {
+                    "status": "failed" if result.error else "done",
+                    "pages": result.pages,
+                    "pagecount": result.pagecount or entry.get("pagecount", 0),
+                    "inserted": result.inserted,
+                    "updated": result.updated,
+                    "skipped": result.skipped,
+                    "elapsed_ms": round(result.elapsed_ms, 1),
+                }
+            )
 
     async def runner() -> None:
         try:
@@ -377,6 +431,7 @@ async def start_collect_all(
                 only_enabled,
                 source_ids,
                 on_result=on_result,
+                on_progress=on_progress,
                 client_factory=client_factory,
             )
         except Exception as exc:  # noqa: BLE001
@@ -385,17 +440,18 @@ async def start_collect_all(
             _collect_state["running"] = False
             _collect_state["finished_at"] = datetime.now(timezone.utc).isoformat()
 
-    total = await count()
     _collect_state.update(
         running=True,
         started_at=datetime.now(timezone.utc).isoformat(),
         finished_at=None,
-        total_sources=total,
+        total_sources=len(sources),
         done_sources=0,
         inserted=0,
         updated=0,
+        skipped=0,
         failed_sources=0,
         error=None,
+        sources=list(by_id.values()),
     )
     asyncio.create_task(runner())
     return dict(_collect_state)
