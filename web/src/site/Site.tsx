@@ -266,9 +266,6 @@ export default function Site() {
           <button type="submit" className="btn btn-sm btn-primary">搜索</button>
         </form>
 
-        <nav className="site-nav">
-          <a href="/admin">管理后台</a>
-        </nav>
       </header>
 
       {route.view === "home" ? (
