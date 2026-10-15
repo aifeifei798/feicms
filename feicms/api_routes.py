@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
+from .auth import TOKEN_COOKIE, auth_enabled, check_credentials, current_user, make_token, require_auth
 from .collector import collect_all, collect_source
 from .config import settings
 from .db import session
@@ -19,6 +20,7 @@ from .schemas import (
     HealthReport,
     ImageDownloadRequest,
     ImageOut,
+    LoginRequest,
     Page,
     SourceCreate,
     SourceOut,
@@ -31,7 +33,34 @@ from .schemas import (
 )
 from .subscribe import detect_kind, ensure_default_subscriptions, sync_all, sync_subscription
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+auth_router = APIRouter(prefix="/api")  # login/status stay reachable without a token
+
+
+# --------------------------------------------------------------------------- auth
+@auth_router.get("/auth/status")
+async def auth_status(request: Request) -> dict[str, Any]:
+    """Whether authentication is enabled and whether this request is authenticated."""
+    user = current_user(request)
+    return {"auth_required": auth_enabled(), "authenticated": user is not None, "user": user}
+
+
+@auth_router.post("/login")
+async def login(body: LoginRequest, response: Response) -> dict[str, Any]:
+    """Exchange username/password for a signed token (also set as a browser cookie)."""
+    if not auth_enabled():
+        return {"token": None, "user": "anonymous", "expires_in": 0, "message": "认证未启用：FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD 为空"}
+    if not check_credentials(body.username, body.password):
+        raise HTTPException(401, "用户名或密码错误")
+    token = make_token(body.username)
+    response.set_cookie(TOKEN_COOKIE, token, httponly=True, samesite="lax", max_age=settings.token_ttl)
+    return {"token": token, "user": body.username, "expires_in": settings.token_ttl}
+
+
+@auth_router.post("/logout", response_model=None)
+async def logout(response: Response) -> dict[str, bool]:
+    response.delete_cookie(TOKEN_COOKIE)
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- sources
@@ -485,6 +514,8 @@ async def config() -> dict[str, Any]:
         "image_interval_minutes": settings.image_interval_minutes,
         "host": settings.host,
         "port": settings.port,
+        "auth_required": auth_enabled(),
+        "admin_user": settings.admin_user,
     }
 
 
@@ -524,7 +555,8 @@ async def jobs(limit: int = Query(50, ge=1, le=200)) -> list[dict[str, Any]]:
 
 
 # ------------------------------------------------------- mackin-compatible self API
-provide_router = APIRouter()
+# ------------------------------------------------------- mackin-compatible self API
+provide_router = APIRouter(dependencies=[Depends(require_auth)] if not settings.public_provide else [])
 
 
 @provide_router.get("/provide/vod")

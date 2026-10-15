@@ -1,26 +1,40 @@
-.PHONY: install dev build serve collect health prune test
+.PHONY: install build dev serve start stop restart status logs collect health prune test
 
 install:
-	uv sync --extra dev
-	cd web && pnpm install
+	./install.sh
 
 build:
-	cd web && pnpm run build
+	./server.sh build
 
 dev:
-	cd web && pnpm run dev
+	./server.sh dev
 
 serve:
-	uv run feicms serve
+	./server.sh dev
+
+start:
+	./server.sh start
+
+stop:
+	./server.sh stop
+
+restart:
+	./server.sh restart
+
+status:
+	./server.sh status
+
+logs:
+	./server.sh logs
 
 collect:
-	uv run feicms collect
+	./server.sh collect
 
 health:
-	uv run feicms health
+	./server.sh health
 
 prune:
-	uv run feicms prune
+	./server.sh prune
 
 test:
 	uv run pytest -q

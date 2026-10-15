@@ -173,3 +173,10 @@ body {
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+.login-shell {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  padding: 2rem;
+}

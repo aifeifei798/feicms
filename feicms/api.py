@@ -5,12 +5,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api_routes import provide_router, router
+from .api_routes import auth_router, provide_router, router
+from .auth import auth_enabled, require_auth
 from .config import BASE_DIR, settings
 from .db import dispose, init_db, session
 from .models import Image
@@ -33,10 +34,11 @@ async def lifespan(app: FastAPI):
     if settings.image_auto:
         tasks.append(asyncio.create_task(auto_image_loop()))
     log.info(
-        "feicms API ready (db=%s, auto_collect=%s, images=%s)",
+        "feicms API ready (db=%s, auto_collect=%s, images=%s, auth=%s)",
         settings.database_url,
         settings.auto_collect,
         settings.image_auto,
+        auth_enabled(),
     )
     try:
         yield
@@ -61,6 +63,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(router)
 app.include_router(provide_router)
 
@@ -73,7 +76,7 @@ async def health() -> dict[str, str]:
 MEDIA_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp"}
 
 
-@app.get("/images/{image_id}", response_model=None)
+@app.get("/images/{image_id}", response_model=None, dependencies=[Depends(require_auth)])
 async def serve_image(image_id: int) -> FileResponse | RedirectResponse:
     """Serve a locally stored poster. Falls back to the original remote URL when
     the file has not been downloaded (or was removed from disk)."""

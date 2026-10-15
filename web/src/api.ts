@@ -180,16 +180,51 @@ export interface ImageBatchResult {
   elapsed_ms: number;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+const TOKEN_KEY = "feicms_token";
+
+export function getToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? "";
+}
+
+export function setToken(token: string | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** fetch with the admin token attached (used by the API docs "试" buttons). */
+export function authorizedFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
   });
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await authorizedFetch(url, init);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status} ${text}`);
   }
   return res.json() as Promise<T>;
+}
+
+export interface AuthStatus {
+  auth_required: boolean;
+  authenticated: boolean;
+  user: string | null;
+}
+
+export interface LoginResult {
+  token: string | null;
+  user: string;
+  expires_in: number;
+  message?: string;
 }
 
 export interface Config {
@@ -220,9 +255,15 @@ export interface Config {
   health_fail_threshold: number;
   host: string;
   port: number;
+  auth_required: boolean;
+  admin_user: string;
 }
 
 export const api = {
+  authStatus: () => request<AuthStatus>("/api/auth/status"),
+  login: (username: string, password: string) =>
+    request<LoginResult>("/api/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+  logout: () => request<{ ok: boolean }>("/api/logout", { method: "POST" }),
   stats: () => request<Stats>("/api/stats"),
   config: () => request<Config>("/api/config"),
   sources: (params: Record<string, string | number | boolean> = {}) => {
@@ -234,7 +275,7 @@ export const api = {
   createSource: (body: Partial<Source>) => request<Source>("/api/sources", { method: "POST", body: JSON.stringify(body) }),
   updateSource: (id: number, body: Partial<Source>) =>
     request<Source>(`/api/sources/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-  deleteSource: (id: number) => fetch(`/api/sources/${id}`, { method: "DELETE" }),
+  deleteSource: (id: number) => authorizedFetch(`/api/sources/${id}`, { method: "DELETE" }),
   toggleSource: (id: number, enabled: boolean) =>
     request<Source>(`/api/sources/${id}/enable`, { method: "POST", body: JSON.stringify({ enabled }) }),
   collectOne: (id: number, pages?: number) =>
@@ -255,7 +296,7 @@ export const api = {
   subscriptions: () => request<Subscription[]>("/api/subscriptions"),
   createSubscription: (body: { url: string; kind?: string; enabled?: boolean }) =>
     request<Subscription>("/api/subscriptions", { method: "POST", body: JSON.stringify(body) }),
-  deleteSubscription: (id: number) => fetch(`/api/subscriptions/${id}`, { method: "DELETE" }),
+  deleteSubscription: (id: number) => authorizedFetch(`/api/subscriptions/${id}`, { method: "DELETE" }),
   syncSubscriptions: (id?: number) =>
     request<SyncResult[]>(`/api/subscriptions/sync${id ? `?subscription_id=${id}` : ""}`, { method: "POST" }),
   categories: () => request<{ type_name: string; count: number }[]>("/api/categories"),

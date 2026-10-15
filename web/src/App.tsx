@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type Stats } from "./api";
+import { api, setToken, type AuthStatus, type Stats } from "./api";
 import Sources from "./Sources";
 import Videos from "./Videos";
 import Images from "./Images";
@@ -23,6 +23,7 @@ export default function App() {
   const [view, setView] = React.useState<View>("dashboard");
   const [toasts, setToasts] = React.useState<{ id: number; text: string; kind: "success" | "error" }[]>([]);
   const [theme, setTheme] = React.useState("light");
+  const [auth, setAuth] = React.useState<AuthStatus | null>(null);
 
   const notify = React.useCallback((text: string, kind: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -30,9 +31,32 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
   }, []);
 
+  const refreshAuth = React.useCallback(() => {
+    api.authStatus().then(setAuth).catch((e) => notify((e as Error).message, "error"));
+  }, [notify]);
+
   React.useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  React.useEffect(() => {
+    refreshAuth();
+  }, [refreshAuth]);
+
+  if (auth && auth.auth_required && !auth.authenticated) {
+    return <Login notify={notify} onDone={refreshAuth} />;
+  }
+
+  const logout = async () => {
+    try {
+      setToken(null);
+      await api.logout();
+      refreshAuth();
+      notify("已退出登录");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -42,6 +66,11 @@ export default function App() {
           <span className="muted ml-2">资源站采集 · 维护 · 聚合</span>
         </div>
         <div className="navbar-end">
+          {auth?.auth_required && (
+            <span className="badge badge-outline">
+              {auth.user ? `登录：${auth.user}` : "未登录"}
+            </span>
+          )}
           <button
             className="btn btn-sm btn-outline"
             onClick={() =>
@@ -68,6 +97,11 @@ export default function App() {
           >
             采集全部
           </button>
+          {auth?.auth_required && (
+            <button className="btn btn-sm btn-ghost" onClick={logout}>
+              退出
+            </button>
+          )}
           <div className="dropdown dropdown-end">
             <button className="btn btn-sm btn-ghost">主题</button>
             <ul className="dropdown-content menu bg-base-100 rounded-box z-[10] w-40 p-2 shadow">
@@ -112,6 +146,73 @@ export default function App() {
             <span>{t.text}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function Login({
+  notify,
+  onDone,
+}: {
+  notify: (text: string, kind?: "success" | "error") => void;
+  onDone: () => void;
+}) {
+  const [username, setUsername] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const result = await api.login(username, password);
+      if (result.token) setToken(result.token);
+      notify(`登录成功：${result.user}`);
+      onDone();
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="login-shell">
+      <div className="card bg-base-100 border border-base-300 w-96 shadow">
+        <div className="card-body">
+          <h2 className="card-title">feicms 管理面板</h2>
+          <p className="muted">需要 .env 里的 FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD</p>
+          <form onSubmit={submit}>
+            <label className="label">
+              <span className="label-text">用户名</span>
+            </label>
+            <input
+              type="text"
+              className="input input-bordered w-full"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="admin"
+              autoComplete="username"
+            />
+            <label className="label mt-2">
+              <span className="label-text">密码</span>
+            </label>
+            <input
+              type="password"
+              className="input input-bordered w-full"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+            <button type="submit" className="btn btn-primary mt-3 w-full" disabled={busy}>
+              {busy ? "登录中…" : "登录"}
+            </button>
+          </form>
+          <p className="muted mt-3">
+            忘了密码？运行 <code>uv run feicms passwd --user admin --password 你的密码</code> 后重启服务。
+          </p>
+        </div>
       </div>
     </div>
   );

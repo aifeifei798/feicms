@@ -85,6 +85,14 @@ class Settings:
     host: str = _env("FEICMS_HOST", "0.0.0.0")
     port: int = _env_int("FEICMS_PORT", 8000)
 
+    # Admin authentication. Both user and password must be set for auth to turn on.
+    admin_user: str = _env("FEICMS_ADMIN_USER", "")
+    admin_password: str = _env("FEICMS_ADMIN_PASSWORD", "")
+    secret: str = _env("FEICMS_SECRET", "")
+    token_ttl: int = _env_int("FEICMS_TOKEN_TTL", 24 * 3600)
+    # /provide/vod is the feed a downstream CMS collects; keep it open by default.
+    public_provide: bool = _env_bool("FEICMS_PUBLIC_PROVIDE", True)
+
     settings: dict = field(default_factory=dict)
 
 

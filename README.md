@@ -34,25 +34,38 @@
 ## 2. 快速开始
 
 ```bash
-# 后端
-uv sync --extra dev                 # 或 pip install -r requirements.txt
-cp .env.example .env
-cp sources.example.yaml sources.yaml   # 仓库不带真实站点列表，见第 3 节
-uv run feicms init-db
-uv run feicms seed                  # 从 sources.yaml 导入
-uv run feicms health                # 探测站点是否可用
-uv run feicms collect               # 采集一次
-uv run feicms serve                 # API + 面板
+./install.sh            # 建 venv + 装依赖 + 构建前端 + 生成 .env + init-db
+./server.sh start       # 后台启动，日志写到 data/server.log
+./server.sh status      # 运行状态 / 健康 / 是否开启登录
 ```
 
+`install.sh` 会自动：
+
+1. 检查 Python 3.10+；有 `uv` 用 `uv sync`，没有则 `python3 -m venv .venv` + `pip install -r requirements.txt`；
+2. 构建前端（有 `pnpm` 用 pnpm，否则 `npm`；都没有则跳过，API 仍然可用）；
+3. 生成 `.env`（若不存在，从 `.env.example` 复制）并**随机生成管理员密码**；
+4. 复制 `sources.example.yaml` → `sources.yaml`（仓库不带真实站点列表，见第 3 节），建表并 seed。
+
+常用选项：
+
 ```bash
-# 前端（管理面板）
+./install.sh --no-frontend     # 只装后端
+./install.sh --mysql           # 额外安装 aiomysql
+./install.sh --force-env       # 覆盖已有 .env（重新生成密码）
+```
+
+手动安装（等价）：
+
+```bash
+uv sync --extra dev
+cp .env.example .env
+uv run feicms init-db && uv run feicms seed
 cd web && pnpm install && pnpm run build     # 产物 web/dist，由 FastAPI 挂载
 ```
 
 打开：
 
-- `http://localhost:8000/` — 管理面板
+- `http://localhost:8000/` — 管理面板（需要登录，见第 9 节）
 - `http://localhost:8000/docs` — OpenAPI 交互式文档
 - `http://localhost:8000/api/stats` — 总览统计
 
@@ -141,6 +154,9 @@ feicms images prune [--delete-files/--keep-files]
 feicms images repair               # 校对数据库状态与磁盘文件
 feicms images layout [--top 12]    # 打印分桶结构
 
+feicms passwd [--user admin --password xxx]   # 写入 .env 的管理员账号（留空则随机生成）
+feicms token [--ttl 3600]          # 打印一个 API token（curl 用）
+
 feicms serve [--host --port]
 ```
 
@@ -180,7 +196,10 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 服务健康 |
+| GET | `/health` | 服务健康（无需登录） |
+| GET | `/api/auth/status` | 认证是否开启、当前请求是否已登录 |
+| POST | `/api/login` | `{username, password}` → token（同时设置 cookie） |
+| POST | `/api/logout` | 清除登录 cookie |
 | GET | `/api/sources` | 站点列表（`?enabled=&health=&q=`） |
 | POST | `/api/sources` | 新增站点 |
 | GET / PATCH / DELETE | `/api/sources/{id}` | 查看 / 修改 / 删除 |
@@ -240,10 +259,79 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_IMAGE_AUTO` | false | 后台自动下载图片（默认关闭，手动下载） |
 | `FEICMS_IMAGE_INTERVAL` | 30 | 自动下载间隔（分钟） |
 | `FEICMS_HOST` / `FEICMS_PORT` | `0.0.0.0` / `8000` | 服务监听 |
+| `FEICMS_ADMIN_USER` / `FEICMS_ADMIN_PASSWORD` | （空） | 管理员账号；两者都设置才启用登录 |
+| `FEICMS_SECRET` | （空） | token 签名密钥，留空则由 user+password 派生 |
+| `FEICMS_TOKEN_TTL` | 86400 | token 有效期（秒） |
+| `FEICMS_PUBLIC_PROVIDE` | true | `/provide/vod` 是否允许匿名访问 |
 
 ---
 
-## 9. 测试
+## 9. 服务管理（`server.sh`）
+
+```bash
+./server.sh start              # 后台启动（PID 文件 data/server.pid，日志 data/server.log）
+./server.sh stop               # 停止（PID 文件丢失时会按端口找进程）
+./server.sh restart
+./server.sh status             # pid / 运行时长 / /health / 认证状态
+./server.sh logs               # 最近 40 行
+./server.sh logs -f           # 持续跟踪
+./server.sh dev                # 前台 + --reload（开发）
+./server.sh build              # 构建前端
+./server.sh init               # init-db + seed
+./server.sh collect --pages 3
+./server.sh health
+./server.sh images scan|download|stats|repair|prune
+./server.sh passwd --user admin --password 你的密码    # 改 .env 里的账号
+./server.sh token              # 打印一个 API token（curl 用）
+```
+
+脚本优先用 `uv`，没有 `uv` 时回退到 `.venv/bin/...`；端口和 host 从 `.env` 读取。
+
+---
+
+## 10. 登录与权限
+
+`.env` 里配置管理员账号，**两者都设置才会启用认证**（留空则 API 完全开放，方便开发）：
+
+```ini
+FEICMS_ADMIN_USER=admin
+FEICMS_ADMIN_PASSWORD=改成强密码
+FEICMS_SECRET=可选：token 签名密钥（留空则由 user+password 派生）
+FEICMS_TOKEN_TTL=86400
+FEICMS_PUBLIC_PROVIDE=true
+```
+
+启用后：
+
+- 所有 `/api/*` 与 `/images/*` 需要登录，未登录返回 `401`；
+- 管理面板打开时显示登录页，登录成功后写入 HttpOnly cookie，海报 `<img>` 也能正常加载；
+- 三种认证方式都支持：
+
+```bash
+# 1) 换 token
+TOKEN=$(curl -s -X POST http://localhost:8000/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"..."}' | jq -r .token)
+curl -s http://localhost:8000/api/stats -H "Authorization: Bearer $TOKEN"
+
+# 2) Basic 认证（最省事）
+curl -s -u admin:密码 http://localhost:8000/api/sources
+```
+
+改密码：
+
+```bash
+uv run feicms passwd --user admin --password 你的密码   # 写回 .env，重启生效
+uv run feicms passwd --user admin                       # 留空则随机生成
+```
+
+`/provide/vod`（给下游 CMS 采集的兼容接口）默认匿名开放；想保护它设 `FEICMS_PUBLIC_PROVIDE=false`。
+
+> 密码明文保存在 `.env`，而 `.env` 已在 `.gitignore` 里，不会进仓库。
+
+---
+
+## 11. 测试
 
 ```bash
 uv sync --extra dev
@@ -254,25 +342,27 @@ uv run pytest -q
 
 ---
 
-## 10. Docker
+## 12. Docker
 
 ```bash
 docker build -t feicms .
-docker run -p 8000:8000 -v ./data:/app/data feicms
+docker run -p 8000:8000 -v ./data:/app/data \
+  -e FEICMS_ADMIN_USER=admin -e FEICMS_ADMIN_PASSWORD=改成强密码 \
+  feicms
 ```
 
 容器内需要自己的 `sources.yaml`（挂载或 `FEICMS_SOURCES` 指向），或用 `feicms subscribe --sync` 从 feed 导入。
 
 ---
 
-## 11. 已知限制
+## 13. 已知限制
 
 - 部分站点忽略 `pg` / `page` 参数（翻页返回相同内容），部分站点强制 `limit=20`；
 - 上游站点域名变动频繁，健康检查会自动禁用失效站点，但不会自动替换；
 - 网络环境（代理、DNS、CDN 屏蔽）会直接影响采集成功率；
 - 标题归一化去重是启发式的，跨站点同名不同影片可能合并，需要人工校对。
 
-## 12. 合规声明
+## 14. 合规声明
 
 本项目只是**采集与聚合的技术实现**，不包含任何站点列表或内容。使用时请自行确认：上游站点是否授权数据抓取、`robots.txt` 与服务条款是否允许、以及下游分发是否合规。由此产生的法律责任由使用者承担。
 

@@ -16,6 +16,14 @@ FEICMS_AUTO_COLLECT=true
 FEICMS_COLLECT_INTERVAL=60
 FEICMS_HEALTH_INTERVAL=30
 FEICMS_HEALTH_THRESHOLD=3
+FEICMS_IMAGE_DIR=data/images
+FEICMS_IMAGE_BATCH=300
+FEICMS_IMAGE_AUTO=false
+FEICMS_ADMIN_USER=admin
+FEICMS_ADMIN_PASSWORD=改成强密码
+FEICMS_SECRET=可选：token 签名密钥
+FEICMS_TOKEN_TTL=86400
+FEICMS_PUBLIC_PROVIDE=true
 FEICMS_HOST=0.0.0.0
 FEICMS_PORT=8000`;
 
@@ -66,6 +74,18 @@ export default function Settings({ notify }: { notify: Notify }) {
                     <tr><td>FEICMS_COLLECT_INTERVAL</td><td>{config.collect_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_HEALTH_INTERVAL</td><td>{config.health_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_HEALTH_THRESHOLD</td><td>{config.health_fail_threshold}</td></tr>
+                    <tr><td>FEICMS_IMAGE_DIR</td><td className="mono">{config.image_dir}</td></tr>
+                    <tr><td>FEICMS_IMAGE_BATCH</td><td>{config.image_batch}</td></tr>
+                    <tr><td>FEICMS_IMAGE_AUTO</td><td>{config.image_auto ? "true" : "false"}</td></tr>
+                    <tr><td>FEICMS_ADMIN_USER</td><td className="mono">{config.admin_user || "（未设置）"}</td></tr>
+                    <tr>
+                      <td>登录认证</td>
+                      <td>
+                        <span className={`badge ${config.auth_required ? "badge-success" : "badge-warning"}`}>
+                          {config.auth_required ? "已启用" : "未启用"}
+                        </span>
+                      </td>
+                    </tr>
                     <tr><td>FEICMS_HOST / PORT</td><td>{config.host}:{config.port}</td></tr>
                   </>
                 )}

@@ -12,3 +12,6 @@ os.environ.setdefault("FEICMS_DB", f"sqlite+aiosqlite:///{_TMP}/test.db")
 os.environ.setdefault("FEICMS_IMAGE_DIR", f"{_TMP}/images")
 os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
 os.environ.setdefault("FEICMS_IMAGE_AUTO", "false")
+# Authentication is off unless a test explicitly turns it on.
+os.environ.setdefault("FEICMS_ADMIN_USER", "")
+os.environ.setdefault("FEICMS_ADMIN_PASSWORD", "")

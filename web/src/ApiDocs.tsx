@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type Config } from "./api";
+import { api, authorizedFetch, type Config } from "./api";
 
 interface Param {
   name: string;
@@ -25,6 +25,39 @@ interface Group {
 }
 
 const GROUPS: Group[] = [
+  {
+    title: "认证",
+    note:
+      "配置 FEICMS_ADMIN_USER + FEICMS_ADMIN_PASSWORD 后，所有 /api/* 与 /images/* 都需要登录；" +
+      "支持 Bearer token、Basic 认证和登录 cookie（/api/login 自动写入）。未配置则全部开放。",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/auth/status",
+        summary: "认证是否开启、当前请求是否已登录",
+        example: "/api/auth/status",
+        tryable: true,
+      },
+      {
+        method: "POST",
+        path: "/api/login",
+        summary: "用户名/密码换取 token（同时设置 HttpOnly cookie）",
+        params: [
+          { name: "username", type: "string", note: "FEICMS_ADMIN_USER" },
+          { name: "password", type: "string", note: "FEICMS_ADMIN_PASSWORD" },
+        ],
+        example: "/api/auth/status",
+        tryable: false,
+      },
+      {
+        method: "POST",
+        path: "/api/logout",
+        summary: "清除登录 cookie",
+        example: "/api/auth/status",
+        tryable: false,
+      },
+    ],
+  },
   {
     title: "资源站管理",
     note: "增删改查采集源，启用/禁用单个源。",
@@ -362,7 +395,7 @@ export default function ApiDocs({ notify }: { notify: (text: string, kind?: "suc
     const key = `${endpoint.method} ${endpoint.path}`;
     setResult({ key, text: "请求中…" });
     try {
-      const res = await fetch(endpoint.example.startsWith("http") ? endpoint.example : origin + endpoint.example);
+      const res = await authorizedFetch(endpoint.example.startsWith("http") ? endpoint.example : origin + endpoint.example);
       const text = await res.text();
       let pretty = text;
       try {

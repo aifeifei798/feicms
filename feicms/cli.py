@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import func, select
 
-from .config import settings
+from .config import BASE_DIR, settings
 from .collector import collect_all, collect_source
 from .db import init_db, session
 from .health import health_check_all
@@ -427,6 +428,53 @@ def images_layout(top: int = typer.Option(12, "--top", help="列出文件最多�
     console.print("[dim]结构: <sha[0:2]>/<sha[2:4]>/<sha>.<ext>（256×256 = 65536 个桶）[/dim]")
     for shard, count in sorted(counts.items(), key=lambda kv: -kv[1])[:top]:
         console.print(f"  {shard.relative_to(root)}/  {count}")
+
+
+@app.command("passwd")
+def set_admin(
+    user: str = typer.Option("admin", "--user", help="管理员用户名"),
+    password: str = typer.Option(None, "--password", help="管理员密码（留空则随机生成）"),
+    env_file: str = typer.Option(str(BASE_DIR / ".env"), "--env-file", help="要写入的 .env 文件"),
+) -> None:
+    """Write FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD into .env and enable login."""
+    from .auth import auth_enabled
+
+    if password is None:
+        password = secrets.token_urlsafe(12)
+
+    path = Path(env_file)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    wanted = {"FEICMS_ADMIN_USER": user, "FEICMS_ADMIN_PASSWORD": password}
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        key = line.split("=", 1)[0].strip()
+        if key in wanted:
+            out.append(f"{key}={wanted[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+    for key, value in wanted.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    console.print(f"[green]写入[/green] {path}")
+    console.print(f"  FEICMS_ADMIN_USER={user}")
+    console.print(f"  FEICMS_ADMIN_PASSWORD={password}")
+    if not auth_enabled():
+        console.print("[dim]当前进程仍无认证；重启服务后生效：./server.sh restart[/dim]")
+
+
+@app.command("token")
+def print_token(ttl: int = typer.Option(3600, "--ttl", help="token 有效期（秒）")) -> None:
+    """Print a signed API token for curl / scripts."""
+    from .auth import auth_enabled, make_token
+
+    if not auth_enabled():
+        console.print("[dim]认证未启用（FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD 为空），无需 token[/dim]")
+        return
+    console.print(make_token(settings.admin_user, ttl))
 
 
 @app.command("serve")
