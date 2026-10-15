@@ -108,6 +108,8 @@ export interface SourceProgress {
   updated: number;
   skipped: number;
   elapsed_ms: number;
+  current: boolean;
+  enabled: boolean;
 }
 
 export interface CollectProgress {
@@ -422,11 +424,6 @@ export const api = {
   deleteSource: (id: number) => authorizedFetch(`/api/sources/${id}`, { method: "DELETE" }),
   toggleSource: (id: number, enabled: boolean) =>
     request<Source>(`/api/sources/${id}/enable`, { method: "POST", body: JSON.stringify({ enabled }) }),
-  collectOne: (id: number, pages?: number) =>
-    request<CollectResult>(
-      `/api/sources/${id}/collect${pages === undefined ? "" : `?pages=${pages}`}`,
-      { method: "POST" }
-    ),
   collectStart: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
     request<CollectProgress>("/api/collect/start", { method: "POST", body: JSON.stringify(body) }),
   collectProgress: () => request<CollectProgress>("/api/collect/progress"),

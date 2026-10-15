@@ -2,7 +2,6 @@ import React from "react";
 import {
   api,
   downloadFile,
-  type CollectProgress,
   type HealthReport,
   type Source,
   type SourceImportResult,
@@ -24,17 +23,10 @@ export default function Sources({ notify }: { notify: Notify }) {
   const [q, setQ] = React.useState("");
   const [health, setHealth] = React.useState("");
   const [onlyEnabled, setOnlyEnabled] = React.useState(false);
-  const [pages, setPages] = React.useState("");
   const [editing, setEditing] = React.useState<Source | null>(null);
   const [creating, setCreating] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [progress, setProgress] = React.useState<CollectProgress | null>(null);
   const [checking, setChecking] = React.useState(false);
   const [report, setReport] = React.useState<HealthReport | null>(null);
-
-  React.useEffect(() => {
-    api.collectProgress().then(setProgress).catch(() => undefined);
-  }, []);
 
   const load = React.useCallback(async () => {
     const params: Record<string, string | boolean> = {};
@@ -52,51 +44,6 @@ export default function Sources({ notify }: { notify: Notify }) {
     await api.toggleSource(s.id, !s.enabled);
     notify(`${s.name} ${s.enabled ? "已禁用" : "已启用"}`);
     load();
-  };
-
-  const collect = async (s: Source, full = false) => {
-    setBusy(true);
-    try {
-      const r = await api.collectOne(s.id, full ? 0 : s.max_pages);
-      notify(
-        `${s.name}: 采集 ${r.pages}/${r.pagecount || "?"} 页 · 新增 ${r.inserted} · 更新 ${r.updated} · 跳过 ${r.skipped}${r.error ? ` · ${r.error}` : ""}`,
-        r.error ? "error" : "success"
-      );
-    } catch (e) {
-      notify((e as Error).message, "error");
-    } finally {
-      setBusy(false);
-      load();
-    }
-  };
-
-  const collectAllSources = async () => {
-    setBusy(true);
-    try {
-      // The sweep runs in the background: a single blocking request for 50+
-      // sites would run for minutes and the browser would give up ("Failed to fetch").
-      let state = await api.collectStart({ pages: pages === "" ? undefined : Number(pages) });
-      setProgress(state);
-      if (state.error) {
-        notify(`采集失败：${state.error}`, "error");
-        return;
-      }
-      notify(`采集已启动：${state.total_sources} 个站点，后台进行中`);
-      while (state.running) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        state = await api.collectProgress();
-        setProgress(state);
-      }
-      notify(
-        `采集完成：${state.done_sources}/${state.total_sources} 个站点 · 新增 ${state.inserted} · 更新 ${state.updated}${state.failed_sources ? ` · ${state.failed_sources} 个失败` : ""}`,
-        state.failed_sources ? "error" : "success"
-      );
-    } catch (e) {
-      notify((e as Error).message, "error");
-    } finally {
-      setBusy(false);
-      load();
-    }
   };
 
   const runHealthCheck = async () => {
@@ -147,27 +94,10 @@ export default function Sources({ notify }: { notify: Notify }) {
           <span className="ml-1">仅启用</span>
         </label>
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>新增站点</button>
-        <select className="select input-bordered" value={pages} onChange={(e) => setPages(e.target.value)} title="采集页数">
-          <option value="">默认页数（每站 max_pages）</option>
-          <option value="10">10 页</option>
-          <option value="20">20 页</option>
-          <option value="50">50 页</option>
-          <option value="0">全量（遍历所有页）</option>
-        </select>
-        <button className="btn btn-sm btn-outline" onClick={collectAllSources} disabled={busy || progress?.running}>
-          {busy || progress?.running ? "采集中…" : "采集全部"}
-        </button>
         <button className="btn btn-sm btn-outline" onClick={runHealthCheck} disabled={checking}>
           {checking ? "检查中…" : "健康检查"}
         </button>
         <span className="muted">{sources.length} 个站点</span>
-        {progress && (
-          <span className="muted">
-            {progress.running ? "进度" : "上次采集"} {progress.done_sources}/{progress.total_sources} · 新增
-            {progress.inserted} · 更新 {progress.updated}
-            {progress.failed_sources ? ` · ${progress.failed_sources} 失败` : ""}
-          </span>
-        )}
         {report && (
           <span className="muted">
             健康 {report.ok} ok / {report.dead} dead（共 {report.checked} 个站点）
@@ -209,10 +139,6 @@ export default function Sources({ notify }: { notify: Notify }) {
                   </td>
                   <td>
                     <div className="flex gap-1">
-                      <button className="btn btn-xs" onClick={() => collect(s)}>采集</button>
-                      <button className="btn btn-xs btn-outline" onClick={() => collect(s, true)} title="遍历该站点所有页">
-                        全量
-                      </button>
                       <button className="btn btn-xs btn-outline" onClick={() => setEditing(s)}>编辑</button>
                       <button className="btn btn-xs btn-outline" onClick={() => toggle(s)}>
                         {s.enabled ? "禁用" : "启用"}

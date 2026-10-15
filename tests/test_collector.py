@@ -140,13 +140,18 @@ def test_background_sweep_reports_progress():
         assert state["error"] is None
         assert state["finished_at"]
 
-        entry = state["sources"][0]
+        entry = next(e for e in state["sources"] if e["source_id"] == src.id)
+        assert entry["current"] is True
         assert entry["name"] == "后台测试站"
         assert entry["status"] == "done"
         assert entry["pages"] == 3
         assert entry["pagecount"] == 3
         assert entry["target"] == 5
         assert entry["inserted"] == 30
+
+        # Sources outside this sweep are still listed, flagged as not current.
+        others = [e for e in state["sources"] if e["source_id"] != src.id]
+        assert all(e["current"] is False for e in others)
 
     asyncio.run(_run())
 

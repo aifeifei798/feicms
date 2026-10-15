@@ -213,7 +213,7 @@ const GROUPS: Group[] = [
       {
         method: "POST",
         path: "/api/collect/start",
-        summary: "在后台启动一次全量采集，立即返回进度快照（UI 的「采集全部」使用这个）",
+        summary: "在后台启动一轮采集，立即返回进度快照（UI 的「采集全部」和每站点「采集」都用这个；`source_ids` 只跑指定站点，`all: true` 也采集禁用站点）",
         body: `{ "names": [], "pages": null, "all": false }`,
         params: [
           {
@@ -221,13 +221,14 @@ const GROUPS: Group[] = [
             type: "int",
             note: "省略 = 每站 max_pages；>0 = 指定页数；0 = 全量遍历所有页",
           },
+          { name: "source_ids", type: "int[]", note: "只采集这些站点（UI 每行「采集」「全量」按钮）" },
         ],
-        example: "curl -X POST http://127.0.0.1:8000/api/collect/start -H 'Content-Type: application/json' -d '{}'",
+        example: "curl -X POST http://127.0.0.1:8000/api/collect/start -H 'Content-Type: application/json' -d '{\"source_ids\": [1, 2]}'",
       },
       {
         method: "GET",
         path: "/api/collect/progress",
-        summary: "查看后台采集进度：running / total_sources / done_sources / inserted / updated / skipped / failed_sources，以及每个站点一条 `sources` 进度（status、pages、pagecount、target、inserted、updated、skipped、elapsed_ms）",
+        summary: "查看后台采集进度：running / total_sources / done_sources / inserted / updated / skipped / failed_sources，以及每个站点一条 `sources` 进度（status、pages、pagecount、target、inserted、updated、skipped、elapsed_ms、current）",
         example: "curl http://127.0.0.1:8000/api/collect/progress",
       },
       {

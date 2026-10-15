@@ -139,7 +139,9 @@ GET  /api/sources/export?fmt=yaml|json|csv
 
 管理面板的「采集全部」是**后台任务**：`POST /api/collect/start` 立即返回进度快照，前端轮询 `GET /api/collect/progress`。同一时间只会有一轮采集，重复点击不会并发跑第二轮（`POST /api/collect` 在后台运行时会返回 409）。这样即使 58 个站点跑几分钟也不会因为浏览器/代理超时而失败。
 
-「采集进度」页面（侧栏 数据 → 采集进度）显示总进度条 + 每个站点一行：状态（采集中 / 待采集 / 完成 / 失败）、本页进度条（已采页数 / 本次计划页数）、新增 / 更新 / 跳过 / 耗时。排序是采集中 → 待采集 → 完成 → 失败，所以正在跑的站点始终在最前面。失败站点只显示「失败」徽章，不列出错误文本（原始错误仍写入 `collect_jobs` 表，`GET /api/jobs` 可以查）。
+「采集」页面（侧栏 数据 → 采集）是采集的唯一入口：总进度条 + 每个站点一行，状态（采集中 / 待采集 / 完成 / 失败）、进度条（已采页数 / 本次计划页数）、新增 / 更新 / 跳过 / 耗时，每行还有「采集」「全量」按钮可以只跑这一个站点。排序是采集中 → 待采集 → 完成 → 失败，本轮没参与的站点沉到底部并标注「未采集」，已禁用的站点显示「已禁用」且采集按钮不可用。失败站点只显示「失败」徽章，不列出错误文本（原始错误仍写入 `collect_jobs` 表，`GET /api/jobs` 可以查），工具栏的「重试失败的 N 个」只重跑这些站点。
+
+「资源站」页面只负责管理站点本身（新增 / 批量导入 / 编辑 / 启用禁用 / 删除 / 健康检查 / 导出列表），不再有采集按钮和页数选择。
 
 资源站列表按健康状态排序：`ok` → `slow` → 未检查 → `dead` → 已禁用，同组内再按 priority 降序。所以跑一轮健康检查后，不可用的站点会自动沉到列表底部（面板「资源站 → 健康检查」和 `feicms sources` 都是这个顺序）。
 
@@ -201,7 +203,7 @@ feicms serve [--host --port]
 | `seed` / `add` | 资源站 → 站点列表 → 批量导入 / 新增站点 | `POST /api/sources`, `POST /api/sources/import` |
 | `sources` / 启用禁用 | 资源站列表（筛选、开关、编辑、删除） | `GET /api/sources`, `PATCH /api/sources/{id}` |
 | — | 站点列表 → 导出 YAML / JSON / CSV | `GET /api/sources/export?fmt=` |
-| `collect` / `health` | 资源站 → 采集全部、健康检查；采集进度 → 每站点进度条 | `POST /api/collect/start`, `GET /api/collect/progress`, `POST /api/health-check` |
+| `collect` / `health` | 采集 → 采集全部 / 每站点「采集」「全量」 / 重试失败的；资源站 → 健康检查 | `POST /api/collect/start`, `GET /api/collect/progress`, `POST /api/health-check` |
 | `subscribe` | 资源站 → 源订阅 | `GET/POST/DELETE /api/subscriptions` |
 | `stats` | 首页总览 | `GET /api/stats` |
 | `prune` / `repair-plays` / `merge-duplicates` | 配置 → 数据维护 | `POST /api/prune` 等 |

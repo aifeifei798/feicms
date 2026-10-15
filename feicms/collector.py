@@ -358,10 +358,31 @@ _collect_state: dict[str, Any] = {
     "sources": [],
 }
 
+# Per-source progress survives across sweeps so the panel can keep showing the
+# last result of sources that are not part of the current run.
+_source_progress: dict[int, dict[str, Any]] = {}
+
 
 def collect_progress() -> dict[str, Any]:
     """Snapshot of the current (or last) collection sweep."""
     return dict(_collect_state)
+
+
+def _progress_entry(src: Source) -> dict[str, Any]:
+    return {
+        "source_id": src.id,
+        "name": src.name,
+        "status": "pending",
+        "pages": 0,
+        "pagecount": 0,
+        "target": src.max_pages,
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "elapsed_ms": 0,
+        "current": True,
+        "enabled": src.enabled,
+    }
 
 
 async def start_collect_all(
@@ -375,26 +396,45 @@ async def start_collect_all(
     if _collect_state["running"]:
         return dict(_collect_state)
 
-    async def prepare() -> list[Source]:
+    async def prepare() -> tuple[list[Source], list[Source]]:
+        # Sources taking part in this sweep, plus every known source so the
+        # panel can keep listing the ones that are not part of it.
         async with session() as s:
-            return await _select_sources(s, names, only_enabled, source_ids)
+            selected = await _select_sources(s, names, only_enabled, source_ids)
+            everyone = await _select_sources(s, None, False, None)
+        return selected, everyone
 
-    sources = await prepare()
-    by_id: dict[int, dict[str, Any]] = {
-        src.id: {
-            "source_id": src.id,
-            "name": src.name,
-            "status": "pending",
-            "pages": 0,
-            "pagecount": 0,
-            "target": src.max_pages,
-            "inserted": 0,
-            "updated": 0,
-            "skipped": 0,
-            "elapsed_ms": 0,
-        }
-        for src in sources
-    }
+    selected, everyone = await prepare()
+    selected_ids = {src.id for src in selected}
+
+    known = {src.id for src in everyone}
+    for source_id in list(_source_progress):
+        if source_id not in known:
+            del _source_progress[source_id]
+
+    for src in everyone:
+        entry = _source_progress.get(src.id)
+        if entry is None:
+            entry = _progress_entry(src)
+            _source_progress[src.id] = entry
+        entry["name"] = src.name
+        entry["target"] = src.max_pages
+        entry["enabled"] = src.enabled
+        entry["current"] = src.id in selected_ids
+        if src.id in selected_ids:
+            entry.update(
+                {
+                    "status": "pending",
+                    "pages": 0,
+                    "pagecount": 0,
+                    "inserted": 0,
+                    "updated": 0,
+                    "skipped": 0,
+                    "elapsed_ms": 0,
+                }
+            )
+
+    by_id = {src.id: _source_progress[src.id] for src in selected}
 
     def on_progress(source_id: int, snap: dict[str, Any]) -> None:
         entry = by_id.get(source_id)
@@ -444,14 +484,14 @@ async def start_collect_all(
         running=True,
         started_at=datetime.now(timezone.utc).isoformat(),
         finished_at=None,
-        total_sources=len(sources),
+        total_sources=len(selected),
         done_sources=0,
         inserted=0,
         updated=0,
         skipped=0,
         failed_sources=0,
         error=None,
-        sources=list(by_id.values()),
+        sources=list(_source_progress.values()),
     )
     asyncio.create_task(runner())
     return dict(_collect_state)

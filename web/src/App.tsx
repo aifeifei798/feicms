@@ -3,12 +3,12 @@ import { api, setToken, type AuthStatus, type CollectProgress, type Stats } from
 import Sources from "./Sources";
 import Videos from "./Videos";
 import Images from "./Images";
-import Jobs from "./Jobs";
+import Collect from "./Collect";
 import Settings from "./Settings";
 import ApiDocs from "./ApiDocs";
 import AiAccess from "./AiAccess";
 
-type View = "dashboard" | "sources" | "videos" | "images" | "jobs" | "api" | "ai" | "settings";
+type View = "dashboard" | "sources" | "videos" | "images" | "collect" | "api" | "ai" | "settings";
 
 const THEMES: { key: string; label: string }[] = [
   { key: "light", label: "浅色" },
@@ -36,7 +36,7 @@ const NAV: { key: View; label: string; group: string }[] = [
   { key: "sources", label: "资源站", group: "数据" },
   { key: "videos", label: "影片库", group: "数据" },
   { key: "images", label: "图片库", group: "数据" },
-  { key: "jobs", label: "采集进度", group: "数据" },
+  { key: "collect", label: "采集", group: "数据" },
   { key: "api", label: "API 说明", group: "接入" },
   { key: "ai", label: "AI / MCP", group: "接入" },
   { key: "settings", label: "配置", group: "系统" },
@@ -48,7 +48,7 @@ const ICONS: Record<View, string> = {
   sources: "M12 3l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5",
   videos: "M8 5v14l11-7z",
   images: "M4 5h16v14H4zM8 15l3-4 3 3 3-3",
-  jobs: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l4 2",
+  collect: "M12 3v11M8 10l4 4 4-4M4 17h16M6 21h12",
   api: "M8 6l-4 6 4 6M16 6l4 6-4 6",
   ai: "M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z",
   settings: "M4 7h16M4 12h16M4 17h16M9 5v4M15 10v4M11 15v4",
@@ -227,7 +227,7 @@ export default function App() {
           {view === "sources" && <Sources notify={notify} />}
           {view === "videos" && <Videos notify={notify} />}
           {view === "images" && <Images notify={notify} />}
-          {view === "jobs" && <Jobs notify={notify} />}
+          {view === "collect" && <Collect notify={notify} />}
           {view === "api" && <ApiDocs notify={notify} />}
           {view === "ai" && <AiAccess notify={notify} />}
           {view === "settings" && <Settings notify={notify} />}
