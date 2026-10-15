@@ -31,22 +31,43 @@ function initialTheme(): string {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-const NAV: { key: View; label: string; icon: string }[] = [
-  { key: "dashboard", label: "总览", icon: "▦" },
-  { key: "sources", label: "资源站", icon: "☑" },
-  { key: "videos", label: "影片库", icon: "▶" },
-  { key: "images", label: "图片库", icon: "▤" },
-  { key: "jobs", label: "采集记录", icon: "≡" },
-  { key: "api", label: "API 说明", icon: "⌘" },
-  { key: "ai", label: "AI / MCP 接入", icon: "✦" },
-  { key: "settings", label: "配置", icon: "⚙" },
+const NAV: { key: View; label: string; group: string }[] = [
+  { key: "dashboard", label: "总览", group: "数据" },
+  { key: "sources", label: "资源站", group: "数据" },
+  { key: "videos", label: "影片库", group: "数据" },
+  { key: "images", label: "图片库", group: "数据" },
+  { key: "jobs", label: "采集记录", group: "数据" },
+  { key: "api", label: "API 说明", group: "接入" },
+  { key: "ai", label: "AI / MCP", group: "接入" },
+  { key: "settings", label: "配置", group: "系统" },
 ];
+
+// 24x24 描边图标，避免 unicode 字符在不同字体下渲染不一致
+const ICONS: Record<View, string> = {
+  dashboard: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  sources: "M12 3l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5",
+  videos: "M8 5v14l11-7z",
+  images: "M4 5h16v14H4zM8 15l3-4 3 3 3-3",
+  jobs: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l4 2",
+  api: "M8 6l-4 6 4 6M16 6l4 6-4 6",
+  ai: "M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z",
+  settings: "M4 7h16M4 12h16M4 17h16M9 5v4M15 10v4M11 15v4",
+};
+
+function Icon({ name }: { name: View }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={ICONS[name]} />
+    </svg>
+  );
+}
 
 export default function App() {
   const [view, setView] = React.useState<View>("dashboard");
   const [toasts, setToasts] = React.useState<{ id: number; text: string; kind: "success" | "error" }[]>([]);
   const [theme, setTheme] = React.useState(initialTheme);
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);
+  const [stats, setStats] = React.useState<Stats | null>(null);
 
   const notify = React.useCallback((text: string, kind: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -58,6 +79,10 @@ export default function App() {
     api.authStatus().then(setAuth).catch((e) => notify((e as Error).message, "error"));
   }, [notify]);
 
+  const refreshStats = React.useCallback(() => {
+    api.stats().then(setStats).catch(() => setStats(null));
+  }, []);
+
   React.useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("feicms_theme", theme);
@@ -68,6 +93,11 @@ export default function App() {
   React.useEffect(() => {
     refreshAuth();
   }, [refreshAuth]);
+
+  React.useEffect(() => {
+    if (!auth || (auth.auth_required && !auth.authenticated)) return;
+    refreshStats();
+  }, [auth, refreshStats]);
 
   if (auth && auth.auth_required && !auth.authenticated) {
     return <Login notify={notify} onDone={refreshAuth} theme={theme} setTheme={setTheme} />;
@@ -84,71 +114,98 @@ export default function App() {
     }
   };
 
+  const collectAll = () => {
+    api
+      .collectAll()
+      .then((r) => {
+        notify(
+          `采集完成：新增 ${r.reduce((a, b) => a + b.inserted, 0)} · 更新 ${r.reduce((a, b) => a + b.updated, 0)} · 抓取 ${r.reduce((a, b) => a + b.pages, 0)} 页`
+        );
+        refreshStats();
+      })
+      .catch((e) => notify((e as Error).message, "error"));
+  };
+
+  const checkHealth = () => {
+    api
+      .healthCheck()
+      .then((r) => {
+        notify(`健康检查：${r.ok} 正常 / ${r.dead} 不可用`, r.dead ? "error" : "success");
+        refreshStats();
+      })
+      .catch((e) => notify((e as Error).message, "error"));
+  };
+
+  const checked = stats ? stats.by_source.filter((s) => s.health !== "unknown").length : 0;
+  const healthRatio = checked > 0 ? stats!.healthy_sources / checked : null;
+  const statusTone = healthRatio === null ? "unknown" : healthRatio >= 0.8 ? "ok" : healthRatio >= 0.5 ? "warn" : "bad";
+  const statusText = stats
+    ? stats.enabled_sources === 0
+      ? "未配置资源站"
+      : checked === 0
+        ? `${stats.enabled_sources} 站点 · 尚未健康检查`
+        : `${stats.healthy_sources}/${checked} 站点健康 · ${stats.videos} 条目`
+    : "连接中…";
+
   return (
     <div className="app-shell">
-      <header className="navbar bg-base-100 border-b border-base-300 px-4">
-        <div className="navbar-start">
-          <img src={BRAND_MARK[theme] ?? BRAND_MARK.light} alt="feicms logo" className="brand-mark" width="30" height="30" />
-          <span className="brand-name">feicms</span>
-          <span className="muted ml-2">资源站采集 · 维护 · 聚合</span>
+      <header className="app-nav">
+        <div className="brand">
+          <img
+            src={BRAND_MARK[theme] ?? BRAND_MARK.light}
+            alt="feicms logo"
+            className="brand-mark"
+            width="34"
+            height="34"
+          />
+          <div className="brand-text">
+            <span className="brand-name">feicms</span>
+            <span className="brand-sub">资源站聚合 · 采集 · RAG 库</span>
+          </div>
         </div>
-        <div className="navbar-end">
-          {auth?.auth_required && (
-            <span className="badge badge-outline">
-              {auth.user ? `登录：${auth.user}` : "未登录"}
-            </span>
-          )}
-          <button
-            className="btn btn-sm btn-outline"
-            onClick={() =>
-              api
-                .healthCheck()
-                .then((r) => notify(`健康检查：${r.ok} 正常 / ${r.dead} 不可用`, r.dead ? "error" : "success"))
-                .catch((e) => notify((e as Error).message, "error"))
-            }
-          >
-            健康检查
-          </button>
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() =>
-              api
-                .collectAll()
-                .then((r) =>
-                  notify(
-                    `采集完成：新增 ${r.reduce((a, b) => a + b.inserted, 0)} · 更新 ${r.reduce((a, b) => a + b.updated, 0)} · 抓取 ${r.reduce((a, b) => a + b.pages, 0)} 页`
-                  )
-                )
-                .catch((e) => notify((e as Error).message, "error"))
-            }
-          >
-            采集全部
-          </button>
-          {auth?.auth_required && (
-            <button className="btn btn-sm btn-ghost" onClick={logout}>
-              退出
-            </button>
-          )}
+
+        <div className="nav-divider" aria-hidden="true" />
+
+        <div className="nav-status" title="站点健康状态">
+          <span className={`status-dot ${statusTone}`} />
+          <span className="status-text">{statusText}</span>
+        </div>
+
+        <div className="nav-actions">
+          <button className="btn btn-sm btn-primary" onClick={collectAll}>采集全部</button>
+          <button className="btn btn-sm btn-outline" onClick={checkHealth}>健康检查</button>
           <ThemePicker theme={theme} setTheme={setTheme} />
+          {auth?.auth_required && (
+            <div className="user-chip">
+              <span className="avatar">{(auth.user || "?").slice(0, 1).toUpperCase()}</span>
+              <span className="user-name">{auth.user || "未登录"}</span>
+              <button className="btn btn-sm btn-ghost" onClick={logout}>退出</button>
+            </div>
+          )}
         </div>
       </header>
 
       <div className="grid grid-cols-[220px_1fr] gap-1.5 p-4">
-        <aside className="menu bg-base-200 rounded-box w-full">
-          {NAV.map((item) => (
-            <button
-              key={item.key}
-              className={`nav-item ${view === item.key ? "active" : ""}`}
-              onClick={() => setView(item.key)}
-            >
-              <span>{item.icon}</span>
-              {item.label}
-            </button>
+        <aside className="side-nav">
+          {["数据", "接入", "系统"].map((group) => (
+            <div key={group} className="nav-group">
+              <span className="nav-group-label">{group}</span>
+              {NAV.filter((item) => item.group === group).map((item) => (
+                <button
+                  key={item.key}
+                  className={`nav-item ${view === item.key ? "active" : ""}`}
+                  onClick={() => setView(item.key)}
+                >
+                  <Icon name={item.key} />
+                  {item.label}
+                </button>
+              ))}
+            </div>
           ))}
         </aside>
 
         <main>
-          {view === "dashboard" && <Dashboard />}
+          {view === "dashboard" && <Dashboard stats={stats} />}
           {view === "sources" && <Sources notify={notify} />}
           {view === "videos" && <Videos notify={notify} />}
           {view === "images" && <Images notify={notify} />}
@@ -271,13 +328,7 @@ function Login({
   );
 }
 
-function Dashboard() {
-  const [stats, setStats] = React.useState<Stats | null>(null);
-
-  React.useEffect(() => {
-    api.stats().then(setStats).catch((e) => console.error(e));
-  }, []);
-
+function Dashboard({ stats }: { stats: Stats | null }) {
   if (!stats) return <div className="muted">加载中…</div>;
 
   const maxType = Math.max(1, ...stats.by_type.map((t) => t.count));
