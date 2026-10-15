@@ -569,7 +569,7 @@ const GROUPS: Group[] = [
           { name: "sort", type: "string", default: "updated", note: "updated | name | source_count" },
           { name: "limit", type: "int", default: "24", note: "1–100" },
           { name: "offset", type: "int", default: "0", note: "偏移" },
-          { name: "hide_adult", type: "bool", default: "true", note: "过滤分类/标题命中关键词的成人内容" },
+          { name: "hide_adult", type: "bool", default: "true", note: "过滤分类/标题命中关键词的成人内容（分类为空也视为成人）" },
         ],
         example: "/api/site/videos?q=流浪&type_name=电影&sort=updated&limit=24&hide_adult=true",
         tryable: true,

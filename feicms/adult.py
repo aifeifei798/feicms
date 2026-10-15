@@ -51,6 +51,10 @@ def adult_condition() -> ColumnElement | None:
     """SQL condition matching videos classified as adult, or None if disabled."""
     terms = [Video.type_name.like(f"%{kw}%") for kw in adult_type_keywords()]
     terms += [Video.name.like(f"%{kw}%") for kw in adult_name_keywords()]
+    # Adult aggregators almost never report a category at all, so an empty
+    # type_name is treated as adult rather than "unknown".
+    terms.append(Video.type_name.is_(None))
+    terms.append(Video.type_name == "")
     return or_(*terms) if terms else None
 
 
@@ -58,6 +62,8 @@ def matched_keyword(video: Video) -> str | None:
     """Which keyword caught this record - useful for auditing the filter."""
     type_name = (video.type_name or "").lower()
     name = (video.name or "").lower()
+    if not type_name:
+        return "分类:未分类"
     for kw in adult_type_keywords():
         if kw.lower() in type_name:
             return f"分类:{kw}"

@@ -537,7 +537,7 @@ export interface SiteFilters {
 
 export const siteApi = {
   stats: () => request<SiteStats>("/api/site/stats"),
-  filters: (hideAdult = true) => request<SiteFilters>(`/api/site/filters?hide_adult=${hideAdult}`),
+  filters: () => request<SiteFilters>("/api/site/filters"),
   videos: (params: Record<string, string | number | boolean>) => {
     const query = Object.entries(params)
       .filter(([, value]) => value !== "" && value !== undefined && value !== null)
@@ -545,7 +545,6 @@ export const siteApi = {
       .join("&");
     return request<Page<VideoSummary>>(`/api/site/videos${query ? `?${query}` : ""}`);
   },
-  video: (id: number, hideAdult = true) => request<Video>(`/api/site/videos/${id}?hide_adult=${hideAdult}`),
-  related: (id: number, hideAdult = true) =>
-    request<VideoSummary[]>(`/api/site/videos/${id}/related?hide_adult=${hideAdult}`),
+  video: (id: number) => request<Video>(`/api/site/videos/${id}`),
+  related: (id: number) => request<VideoSummary[]>(`/api/site/videos/${id}/related`),
 };

@@ -218,12 +218,29 @@ def test_uncategorised_label_matches_empty_categories():
 
     video_id = asyncio.run(_inner())
 
-    filters = client.get("/api/site/filters").json()
-    label = next(t for t in filters["types"] if t["type_name"] == "未分类")
+    from feicms.config import settings
 
-    listing = client.get("/api/site/videos", params={"type_name": "未分类", "limit": 100}).json()
-    assert listing["total"] == label["count"]
-    assert any(item["id"] == video_id for item in listing["items"])
+    previous = settings.hide_adult
+    settings.hide_adult = True
+    try:
+        # 「未分类」 is the label listings show for an empty category, so the chip
+        # has to return exactly the records it counts.
+        filters = client.get("/api/site/filters", params={"hide_adult": "false"}).json()
+        label = next(t for t in filters["types"] if t["type_name"] == "未分类")
+
+        listing = client.get(
+            "/api/site/videos",
+            params={"type_name": "未分类", "hide_adult": "false", "limit": 100},
+        ).json()
+        assert listing["total"] == label["count"]
+        assert any(item["id"] == video_id for item in listing["items"])
+
+        # Upstream adult aggregators rarely report a category, so an empty one is
+        # treated as adult and kept off the front site.
+        assert client.get("/api/site/videos", params={"type_name": "未分类", "limit": 100}).json()["total"] == 0
+        assert client.get(f"/api/site/videos/{video_id}").status_code == 404
+    finally:
+        settings.hide_adult = previous
 
 
 def test_spa_deep_links_fall_back_to_the_app():

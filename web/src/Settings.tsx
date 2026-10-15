@@ -327,7 +327,8 @@ export default function Settings({ notify }: { notify: Notify }) {
           <h2 className="card-title">成人内容过滤</h2>
           <p className="muted">
             前台（<span className="mono">/</span>）默认屏蔽成人内容：分类或标题命中关键词的影片不进前台列表、
-            分类计数和搜索。后台影片库始终显示全部。关键词改动会写入 <span className="mono">.env</span>，
+            分类计数和搜索；分类为空的影片也视为成人（成人聚合站通常不上报分类）。开关只在这里，前台没有切换。
+            后台影片库始终显示全部。关键词改动会写入 <span className="mono">.env</span>，
             重启后仍然生效。命令行等价：<span className="mono">uv run feicms adult --on / --off</span>。
           </p>
           <div className="mt-2 flex flex-wrap gap-2">

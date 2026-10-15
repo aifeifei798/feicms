@@ -4,17 +4,6 @@ import Player from "./Player";
 
 const PAGE_SIZE = 24;
 
-/** Visitor choice for the adult filter is remembered per browser; when nothing
- * is stored the server default (FEICMS_HIDE_ADULT) decides. */
-const ADULT_KEY = "feicms_adult_filter";
-
-function storedAdultFilter(): boolean | null {
-  const raw = window.localStorage.getItem(ADULT_KEY);
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  return null;
-}
-
 
 type Route = { view: "home" } | { view: "video"; id: number };
 
@@ -75,7 +64,6 @@ export default function Site() {
   const [route, setRoute] = React.useState<Route>(parseRoute(window.location.pathname));
   const [stats, setStats] = React.useState<SiteStats | null>(null);
   const [filters, setFilters] = React.useState<SiteFilters | null>(null);
-  const [hideAdult, setHideAdult] = React.useState<boolean>(storedAdultFilter() ?? true);
 
   const [q, setQ] = React.useState("");
   const [type, setType] = React.useState("");
@@ -92,39 +80,33 @@ export default function Site() {
   const [episodeIndex, setEpisodeIndex] = React.useState(0);
 
   React.useEffect(() => {
-    siteApi.stats()
-      .then((s) => {
-        setStats(s);
-        // No explicit visitor choice yet: follow the server default.
-        if (storedAdultFilter() === null) setHideAdult(s.hide_adult);
-      })
-      .catch(() => setStats(null));
+    siteApi.stats().then(setStats).catch(() => setStats(null));
   }, []);
 
   React.useEffect(() => {
-    siteApi.filters(hideAdult).then(setFilters).catch(() => setFilters(null));
-  }, [hideAdult]);
+    siteApi.filters().then(setFilters).catch(() => setFilters(null));
+  }, []);
 
   React.useEffect(() => {
     if (route.view !== "home") return;
     setLoading(true);
     setError(null);
     siteApi
-      .videos({ q, type_name: type, year, sort, limit: PAGE_SIZE, offset, hide_adult: hideAdult })
+      .videos({ q, type_name: type, year, sort, limit: PAGE_SIZE, offset })
       .then((page) => {
         setItems(page.items as VideoSummary[]);
         setTotal(page.total);
       })
       .catch((e: Error) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
-  }, [route, q, type, year, sort, offset, hideAdult]);
+  }, [route, q, type, year, sort, offset]);
 
   React.useEffect(() => {
     if (route.view !== "video") return;
     setLoading(true);
     setError(null);
     siteApi
-      .video(route.id, hideAdult)
+      .video(route.id)
       .then((video) => {
         setDetail(video);
         setLineIndex(0);
@@ -134,10 +116,10 @@ export default function Site() {
       .catch((e: Error) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
     siteApi
-      .related(route.id, hideAdult)
+      .related(route.id)
       .then(setRelated)
       .catch(() => setRelated([]));
-  }, [route, hideAdult]);
+  }, [route]);
 
   React.useEffect(() => {
     if (route.view === "home") document.title = "feicms 影视库";
@@ -148,13 +130,6 @@ export default function Site() {
     window.history.pushState(next, "", path);
     setRoute(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const toggleAdult = () => {
-    const next = !hideAdult;
-    setHideAdult(next);
-    window.localStorage.setItem(ADULT_KEY, String(next));
-    setOffset(0);
   };
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -206,19 +181,11 @@ export default function Site() {
                 海报本地化 {stats?.posters ?? 0} 张
                 {stats?.last_updated ? ` · 最近更新 ${formatDate(stats.last_updated)}` : ""}
                 {stats?.adult_videos
-                  ? ` · 成人内容 ${stats.adult_videos} 部${hideAdult ? "（已屏蔽）" : "（显示中）"}`
+                  ? ` · 成人内容 ${stats.adult_videos} 部${stats.hide_adult ? "（已屏蔽）" : "（显示中）"}`
                   : ""}
               </p>
             </div>
             <div className="hero-actions">
-              <button
-                type="button"
-                className={`chip ${hideAdult ? "chip-active" : ""}`}
-                onClick={toggleAdult}
-                title="按分类与标题关键词过滤成人内容，选择保存在浏览器里"
-              >
-                {hideAdult ? "屏蔽成人内容" : "包含成人内容"}
-              </button>
               <select className="select select-sm" value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="updated">最近更新</option>
                 <option value="name">名称</option>
