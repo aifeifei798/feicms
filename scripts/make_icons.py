@@ -16,7 +16,11 @@ from pathlib import Path
 import cairosvg
 
 BASE = Path(__file__).resolve().parent.parent
-MARK = BASE / "assets" / "logo-mark.svg"
+MARKS = {
+    "light": BASE / "assets" / "logo-mark.svg",
+    "dark": BASE / "assets" / "logo-mark-dark.svg",
+    "synthwave": BASE / "assets" / "logo-mark-synthwave.svg",
+}
 LOGO = BASE / "assets" / "logo.svg"
 BANNER = BASE / "assets" / "logo-banner.svg"
 
@@ -33,13 +37,16 @@ def main() -> None:
     public = BASE / "web" / "public"
     public.mkdir(parents=True, exist_ok=True)
 
-    for size in SIZES:
-        render(MARK, assets / f"icon-{size}.png", size)
-        if size in (16, 32, 48):
-            render(MARK, assets / f"favicon-{size}.png", size)
-
-    render(MARK, public / "favicon.png", 32)
-    render(MARK, public / "apple-touch-icon.png", 180)
+    for theme, mark in MARKS.items():
+        suffix = "" if theme == "light" else f"-{theme}"
+        for size in SIZES:
+            render(mark, assets / f"icon{suffix}-{size}.png", size)
+            if size in (16, 32, 48):
+                render(mark, assets / f"favicon{suffix}-{size}.png", size)
+        render(mark, public / f"favicon{suffix}.png", 32)
+        render(mark, public / f"apple-touch-icon{suffix}.png", 180)
+        (public / f"favicon{suffix}.svg").write_text(mark.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"wrote {public / f'favicon{suffix}.svg'}")
 
     cairosvg.svg2png(url=str(LOGO), write_to=str(assets / "logo.png"), output_width=600, output_height=128)
     print(f"wrote {assets / 'logo.png'} (600x128)")

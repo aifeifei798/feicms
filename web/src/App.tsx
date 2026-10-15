@@ -10,6 +10,27 @@ import AiAccess from "./AiAccess";
 
 type View = "dashboard" | "sources" | "videos" | "images" | "jobs" | "api" | "ai" | "settings";
 
+const THEMES: { key: string; label: string }[] = [
+  { key: "light", label: "浅色" },
+  { key: "dark", label: "深色" },
+  { key: "synthwave", label: "Synthwave" },
+];
+
+// 品牌图标跟随主题（形状不变，只换渐变）
+const BRAND_MARK: Record<string, string> = {
+  light: "/favicon.svg",
+  dark: "/favicon-dark.svg",
+  synthwave: "/favicon-synthwave.svg",
+};
+
+function initialTheme(): string {
+  const fromUrl = new URLSearchParams(window.location.search).get("theme");
+  if (fromUrl && THEMES.some((t) => t.key === fromUrl)) return fromUrl;
+  const saved = localStorage.getItem("feicms_theme");
+  if (saved && THEMES.some((t) => t.key === saved)) return saved;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 const NAV: { key: View; label: string; icon: string }[] = [
   { key: "dashboard", label: "总览", icon: "▦" },
   { key: "sources", label: "资源站", icon: "☑" },
@@ -24,7 +45,7 @@ const NAV: { key: View; label: string; icon: string }[] = [
 export default function App() {
   const [view, setView] = React.useState<View>("dashboard");
   const [toasts, setToasts] = React.useState<{ id: number; text: string; kind: "success" | "error" }[]>([]);
-  const [theme, setTheme] = React.useState("light");
+  const [theme, setTheme] = React.useState(initialTheme);
   const [auth, setAuth] = React.useState<AuthStatus | null>(null);
 
   const notify = React.useCallback((text: string, kind: "success" | "error" = "success") => {
@@ -39,6 +60,9 @@ export default function App() {
 
   React.useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("feicms_theme", theme);
+    const icon = document.querySelector('link[rel="icon"]');
+    if (icon) icon.setAttribute("href", BRAND_MARK[theme] ?? BRAND_MARK.light);
   }, [theme]);
 
   React.useEffect(() => {
@@ -46,7 +70,7 @@ export default function App() {
   }, [refreshAuth]);
 
   if (auth && auth.auth_required && !auth.authenticated) {
-    return <Login notify={notify} onDone={refreshAuth} />;
+    return <Login notify={notify} onDone={refreshAuth} theme={theme} setTheme={setTheme} />;
   }
 
   const logout = async () => {
@@ -64,7 +88,7 @@ export default function App() {
     <div className="app-shell">
       <header className="navbar bg-base-100 border-b border-base-300 px-4">
         <div className="navbar-start">
-          <img src="/favicon.svg" alt="feicms logo" className="brand-mark" width="30" height="30" />
+          <img src={BRAND_MARK[theme] ?? BRAND_MARK.light} alt="feicms logo" className="brand-mark" width="30" height="30" />
           <span className="brand-name">feicms</span>
           <span className="muted ml-2">资源站采集 · 维护 · 聚合</span>
         </div>
@@ -105,16 +129,7 @@ export default function App() {
               退出
             </button>
           )}
-          <div className="dropdown dropdown-end">
-            <button className="btn btn-sm btn-ghost">主题</button>
-            <ul className="dropdown-content menu bg-base-100 rounded-box z-[10] w-40 p-2 shadow">
-              {["light", "dark", "synthwave"].map((t) => (
-                <li key={t}>
-                  <button onClick={() => setTheme(t)}>{t}</button>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ThemePicker theme={theme} setTheme={setTheme} />
         </div>
       </header>
 
@@ -155,12 +170,33 @@ export default function App() {
   );
 }
 
+function ThemePicker({ theme, setTheme }: { theme: string; setTheme: (t: string) => void }) {
+  return (
+    <div className="theme-picker" role="group" aria-label="主题">
+      {THEMES.map((t) => (
+        <button
+          key={t.key}
+          className={theme === t.key ? "active" : ""}
+          onClick={() => setTheme(t.key)}
+          title={t.key}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Login({
   notify,
   onDone,
+  theme,
+  setTheme,
 }: {
   notify: (text: string, kind?: "success" | "error") => void;
   onDone: () => void;
+  theme: string;
+  setTheme: (t: string) => void;
 }) {
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -185,7 +221,16 @@ function Login({
     <div className="login-shell">
       <div className="card bg-base-100 border border-base-300 w-96 shadow">
         <div className="card-body">
-          <h2 className="card-title">feicms 管理面板</h2>
+          <div className="flex items-center gap-2">
+            <img
+              src={BRAND_MARK[theme] ?? BRAND_MARK.light}
+              alt="feicms logo"
+              className="brand-mark"
+              width="34"
+              height="34"
+            />
+            <h2 className="card-title">feicms 管理面板</h2>
+          </div>
           <p className="muted">需要 .env 里的 FEICMS_ADMIN_USER / FEICMS_ADMIN_PASSWORD</p>
           <form onSubmit={submit}>
             <label className="label">
@@ -213,6 +258,10 @@ function Login({
               {busy ? "登录中…" : "登录"}
             </button>
           </form>
+          <div className="mt-3 flex items-center justify-between">
+            <span className="muted">主题</span>
+            <ThemePicker theme={theme} setTheme={setTheme} />
+          </div>
           <p className="muted mt-3">
             忘了密码？运行 <code>uv run feicms passwd --user admin --password 你的密码</code> 后重启服务。
           </p>

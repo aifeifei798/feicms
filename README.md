@@ -470,12 +470,18 @@ docker run -p 8000:8000 -v ./data:/app/data \
 
 | 文件 | 用途 |
 |---|---|
-| `assets/logo-mark.svg` | 图标（渐变圆角方块），管理面板与 favicon 使用 |
+| `assets/logo-mark.svg` | 图标（渐变圆角方块），浅色主题 / favicon 使用 |
+| `assets/logo-mark-dark.svg` | 深色主题图标（青蓝渐变） |
+| `assets/logo-mark-synthwave.svg` | Synthwave 主题图标（粉橙→紫渐变） |
 | `assets/logo-mark-mono.svg` | 单色图标（透明背景），文档/浅色背景使用 |
 | `assets/logo.svg` / `assets/logo-dark.svg` | 图标 + 文字（浅色 / 深色背景） |
 | `assets/logo-banner.svg` / `.png` | README 头图（1200×400） |
-| `assets/icon-{16,32,48,128,180,192,256,512}.png` | 各尺寸位图 |
-| `web/public/favicon.svg` / `favicon.png` / `apple-touch-icon.png` | 浏览器图标（Vite 自动打包进 `web/dist`） |
+| `assets/icon-{16,32,48,128,180,192,256,512}.png` | 各尺寸位图（`-dark` / `-synthwave` 后缀为对应主题版本） |
+| `web/public/favicon*.svg` / `favicon*.png` | 浏览器图标，面板切主题时自动换 |
+
+管理面板的配色全部走 daisyUI 主题变量（`--color-base-100/200/300`、`--color-primary`、`--color-error` 等），
+切到 dark / synthwave 时卡片、代码块、缩略图、导航高亮都会同步变化；主题选择保存在 `localStorage`
+（`feicms_theme`），首次访问跟随系统 `prefers-color-scheme`。
 
 重新生成位图（改完 SVG 后）：
 

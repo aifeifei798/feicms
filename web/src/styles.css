@@ -3,12 +3,25 @@
   themes: light --default, dark, synthwave;
 }
 
+/* 主题自适应：daisyUI 5 的变量是 --color-base-100 / --color-primary ...
+   旧写法 var(--fallback-b1, #fff) 里的 --fallback-* 未定义，所以永远取浅色字面量，
+   dark / synthwave 主题下卡片、代码块、缩略图都会变成白色。 */
 :root {
-  --brand: #4f7cff;
+  --brand: var(--color-primary, #4f7cff);
+  --brand-content: var(--color-primary-content, #fff);
+  --brand-soft: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  --surface: var(--color-base-100, #fff);
+  --surface-2: var(--color-base-200, #f3f4f6);
+  --line: var(--color-base-300, #e5e7eb);
+  --text: var(--color-base-content, #1f2937);
+  --text-dim: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+  --error-soft: color-mix(in oklab, var(--color-error) 12%, transparent);
+  --radius: var(--radius-box, 0.5rem);
 }
 
 body {
-  background: var(--fallback-b1, #f4f6fb);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .app-shell {
@@ -17,7 +30,7 @@ body {
 
 .brand-mark {
   border-radius: 0.5rem;
-  box-shadow: 0 2px 8px rgba(31, 79, 184, 0.25);
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--color-primary) 30%, transparent);
 }
 .brand-name {
   font-weight: 700;
@@ -31,8 +44,8 @@ body {
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 1rem;
-  border-radius: 0.5rem;
-  color: var(--fallback-bc, #374151);
+  border-radius: var(--radius);
+  color: var(--text);
   font-size: 0.9rem;
   cursor: pointer;
   border: 0;
@@ -41,11 +54,11 @@ body {
   width: 100%;
 }
 .nav-item:hover {
-  background: rgba(79, 124, 255, 0.1);
+  background: var(--brand-soft);
 }
 .nav-item.active {
   background: var(--brand);
-  color: #fff;
+  color: var(--brand-content);
 }
 
 .stat-grid {
@@ -55,19 +68,19 @@ body {
 }
 
 .stat-card {
-  background: var(--fallback-b1, #fff);
-  border: 1px solid var(--fallback-b3, #e5e7eb);
-  border-radius: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 1rem 1.25rem;
 }
 .stat-card b {
   font-size: 1.6rem;
   display: block;
+  color: var(--text);
 }
 .stat-card span {
-  color: var(--fallback-bc, #6b7280);
+  color: var(--text-dim);
   font-size: 0.8rem;
-  opacity: 0.75;
 }
 
 .toolbar {
@@ -79,7 +92,7 @@ body {
 }
 
 .muted {
-  color: var(--fallback-bc, #6b7280);
+  color: var(--text-dim);
   font-size: 0.85rem;
 }
 .mono {
@@ -103,9 +116,9 @@ body {
   gap: 0.75rem;
 }
 .video-card {
-  border: 1px solid var(--fallback-b3, #e5e7eb);
-  border-radius: 0.75rem;
-  background: var(--fallback-b1, #fff);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
   padding: 0.75rem;
   cursor: pointer;
 }
@@ -114,7 +127,7 @@ body {
   height: 120px;
   object-fit: cover;
   border-radius: 0.5rem;
-  background: var(--fallback-b2, #e5e7eb);
+  background: var(--surface-2);
 }
 
 .bar {
@@ -124,19 +137,20 @@ body {
 }
 
 .code-block {
-  background: var(--fallback-b2, #e5e7eb);
-  border: 1px solid var(--fallback-b3, #d1d5db);
-  border-radius: 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 0.6rem 0.8rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
   white-space: pre-wrap;
   max-height: 320px;
   overflow: auto;
+  color: var(--text);
 }
 .code-block-error {
-  border-color: var(--fallback-er, #f87171);
-  background: rgba(248, 113, 113, 0.12);
+  border-color: var(--color-error, #f87171);
+  background: var(--error-soft);
 }
 
 .image-list table {
@@ -147,26 +161,23 @@ body {
   height: 48px;
   object-fit: cover;
   border-radius: 0.35rem;
-  background: var(--fallback-b2, #e5e7eb);
-  border: 1px solid var(--fallback-b3, #d1d5db);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
 }
 .image-thumb-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--fallback-bc, #6b7280);
+  color: var(--text-dim);
   font-size: 0.7rem;
 }
 .image-path {
   font-size: 0.72rem;
-  color: var(--fallback-bc, #6b7280);
+  color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 420px;
-}
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .login-shell {
@@ -174,4 +185,28 @@ body {
   place-items: center;
   min-height: 60vh;
   padding: 2rem;
+}
+
+.theme-picker {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.theme-picker button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.theme-picker button:hover {
+  background: var(--brand-soft);
+  color: var(--text);
+}
+.theme-picker button.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-content);
 }
