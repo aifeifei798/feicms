@@ -53,7 +53,7 @@ export default function Videos({ notify }: { notify: Notify }) {
         <select className="select input-bordered" value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">全部分类</option>
           {types.map((t) => (
-            <option key={t.type_name} value={t.type_name}>
+            <option key={t.type_name || "未分类"} value={t.type_name || "未分类"}>
               {t.type_name || "未分类"} ({t.count})
             </option>
           ))}

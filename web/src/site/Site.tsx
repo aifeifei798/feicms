@@ -352,17 +352,6 @@ export default function Site() {
                         </button>
                       ))}
                     </div>
-
-                    <div className="other-lines">
-                      <h2>其它线路</h2>
-                      {detail.plays.map((play, index) => (
-                        <div className="other-line" key={`${play.from_name}-${index}`}>
-                          <span className="other-line-name">{play.from_name}</span>
-                          <span className="muted">{play.episodes.length} 集</span>
-                          <a href={play.episodes[0]?.url} target="_blank" rel="noopener noreferrer">在新窗口打开</a>
-                        </div>
-                      ))}
-                    </div>
                   </>
                 )}
               </div>

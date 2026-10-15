@@ -196,6 +196,36 @@ def test_adult_filter_endpoint_changes_the_default():
         assert DEFAULT_ADULT_TYPE_KEYWORDS and DEFAULT_ADULT_NAME_KEYWORDS
 
 
+def test_uncategorised_label_matches_empty_categories():
+    import asyncio
+
+    async def _inner() -> int:
+        await init_db()
+        async with session() as s:
+            signature = build_signature("无分类测试影片")
+            video = await s.scalar(select(Video).where(Video.signature == signature))
+            if video is None:
+                video = Video(
+                    name="无分类测试影片",
+                    signature=signature,
+                    type_name="",
+                    year="2024",
+                    source_count=1,
+                )
+                s.add(video)
+                await s.flush()
+            return video.id
+
+    video_id = asyncio.run(_inner())
+
+    filters = client.get("/api/site/filters").json()
+    label = next(t for t in filters["types"] if t["type_name"] == "未分类")
+
+    listing = client.get("/api/site/videos", params={"type_name": "未分类", "limit": 100}).json()
+    assert listing["total"] == label["count"]
+    assert any(item["id"] == video_id for item in listing["items"])
+
+
 def test_spa_deep_links_fall_back_to_the_app():
     from feicms.api import STATIC_ROOT
 

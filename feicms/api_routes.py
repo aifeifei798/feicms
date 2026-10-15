@@ -86,6 +86,22 @@ MEDIA_TYPES = {
     "bmp": "image/bmp",
 }
 
+UNCATEGORIZED = "未分类"
+
+
+def _type_condition(type_name: str | None) -> ColumnElement | None:
+    """Filter by category.
+
+    Listings label records with an empty `type_name` as 「未分类」, so that label
+    has to match NULL/'' rather than a literal string, otherwise clicking the
+    chip shows nothing.
+    """
+    if not type_name:
+        return None
+    if type_name == UNCATEGORIZED:
+        return Video.type_name.is_(None) | (Video.type_name == "")
+    return Video.type_name == type_name
+
 
 # --------------------------------------------------------------------------- auth
 @auth_router.get("/auth/status")
@@ -617,8 +633,9 @@ async def list_videos(
         stmt = select(Video)
         if q:
             stmt = stmt.where(Video.name.like(f"%{q}%"))
-        if type_name:
-            stmt = stmt.where(Video.type_name == type_name)
+        type_condition = _type_condition(type_name)
+        if type_condition is not None:
+            stmt = stmt.where(type_condition)
         if year:
             stmt = stmt.where(Video.year == year)
         if source_id:
@@ -1110,8 +1127,9 @@ async def site_videos(
         stmt = select(Video)
         if q:
             stmt = stmt.where(Video.name.like(f"%{q}%"))
-        if type_name:
-            stmt = stmt.where(Video.type_name == type_name)
+        type_condition = _type_condition(type_name)
+        if type_condition is not None:
+            stmt = stmt.where(type_condition)
         if year:
             stmt = stmt.where(Video.year == year)
         filter_ = _hide_adult(hide_adult)
@@ -1157,8 +1175,9 @@ async def site_related(
         if video is None:
             raise HTTPException(404, "video not found")
         stmt = select(Video).where(Video.id != video_id)
-        if video.type_name:
-            stmt = stmt.where(Video.type_name == video.type_name)
+        type_condition = _type_condition(video.type_name)
+        if type_condition is not None:
+            stmt = stmt.where(type_condition)
         filter_ = _hide_adult(hide_adult)
         if filter_ is not None:
             stmt = stmt.where(filter_)

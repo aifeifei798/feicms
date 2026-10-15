@@ -17,7 +17,7 @@ export default function Player({ url, poster }: { url: string; poster?: string |
     let hls: { destroy: () => void } | null = null;
     const isHls = /\.m3u8(\?.*)?$/i.test(url);
 
-    const onError = () => setError("这条线路无法直接播放，换一条或在新窗口打开");
+    const onError = () => setError("这条线路无法直接播放，换一条线路试试");
     video.addEventListener("error", onError);
 
     if (isHls) {
@@ -28,7 +28,7 @@ export default function Player({ url, poster }: { url: string; poster?: string |
           return;
         }
         if (!Hls.isSupported()) {
-          setError("浏览器不支持 HLS 播放，请在新窗口打开");
+          setError("浏览器不支持 HLS 播放，换一条线路试试");
           return;
         }
         const player = new Hls({ lowLatencyMode: true });
@@ -52,14 +52,11 @@ export default function Player({ url, poster }: { url: string; poster?: string |
   return (
     <div className="player-wrap">
       <video ref={ref} controls playsInline preload="metadata" poster={poster || undefined}>
-        <p className="muted">浏览器不支持内嵌播放，请在新窗口打开。</p>
+        <p className="muted">浏览器不支持内嵌播放。</p>
       </video>
       {error && (
         <div className="player-error">
           <span className="muted">{error}</span>
-          <a className="btn btn-sm btn-outline" href={url} target="_blank" rel="noopener noreferrer">
-            在新窗口打开
-          </a>
         </div>
       )}
     </div>

@@ -723,32 +723,6 @@ body {
   border-color: transparent;
 }
 
-.other-lines {
-  margin-top: 1rem;
-}
-.other-lines h2 {
-  font-size: 1.05rem;
-  margin-bottom: 0.4rem;
-}
-.other-line {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.4rem 0.6rem;
-  margin-top: 0.4rem;
-}
-.other-line-name {
-  font-weight: 600;
-  font-size: 0.85rem;
-}
-.other-lines a {
-  color: var(--brand);
-  font-size: 0.8rem;
-}
-
 .related {
   margin-top: 1.5rem;
 }
