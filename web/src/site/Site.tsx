@@ -443,7 +443,6 @@ export default function Site() {
         <span className="muted">
           feicms · 数据来自公开资源站，本站只做聚合与检索，不托管任何视频文件。
         </span>
-        <a href="/admin">管理后台</a>
       </footer>
     </div>
   );
