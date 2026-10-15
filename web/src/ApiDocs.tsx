@@ -93,15 +93,17 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: "MCP（给 AI 客户端）",
+    title: "MCP（给 AI 客户端的只读 RAG 库）",
     note:
-      "同一个服务有两种传输：HTTP 的 POST /mcp（JSON-RPC），以及本地 stdio（uv run feicms mcp）。" +
-      "用 API key 认证：X-API-Key: fk_... 或 Authorization: Bearer fk_...。只读 key 不能调用采集类工具。",
+      "MCP 这一层只读：search / get_document / browse / related / read_chunks / list_types / get_stats。" +
+      "采集、健康检查、海报下载等维护动作不在 MCP 里，只在管理面板、CLI 和 /api/*（需要管理员账号或 write key）。" +
+      "两种传输：HTTP 的 POST /mcp（JSON-RPC），以及本地 stdio（uv run feicms mcp）。" +
+      "用 API key 认证：X-API-Key: fk_... 或 Authorization: Bearer fk_...。",
     endpoints: [
       {
         method: "GET",
         path: "/mcp",
-        summary: "MCP 服务信息 + 工具列表",
+        summary: "MCP 服务信息 + 工具列表（read_only: true）",
         example: "curl -H 'X-API-Key: fk_...' http://127.0.0.1:8000/mcp",
         tryable: true,
       },
@@ -115,8 +117,8 @@ const GROUPS: Group[] = [
       {
         method: "POST",
         path: "/mcp",
-        summary: "JSON-RPC：initialize / tools/list / tools/call / resources/list",
-        body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_videos","arguments":{"query":"流浪地球"}}}',
+        summary: "JSON-RPC：initialize / tools/list / tools/call / resources/list / resources/read",
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"流浪地球","limit":5}}}',
         example: "curl -X POST -H 'X-API-Key: fk_...' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' http://127.0.0.1:8000/mcp",
         tryable: false,
       },

@@ -370,7 +370,9 @@ curl -s http://localhost:8000/api/videos?q=流浪地球 -H "Authorization: Beare
 
 `POST/PUT/PATCH/DELETE` 对只读 key 返回 `403`；只有管理员账号（`FEICMS_ADMIN_USER`）可以管理 key。
 
-### MCP server
+### MCP server（只读 RAG 库）
+
+MCP 这一层**只读**：它把采集好的影片库暴露成「检索 + 文档 + 分块」，给 AI 客户端做 RAG / 问答用。采集、健康检查、海报下载、增删资源站这些维护动作不在 MCP 里，只留在管理面板、CLI 和 `/api/*`（需要管理员账号或 `write` key）。
 
 同一个服务提供两种 MCP 传输，工具集相同：
 
@@ -399,20 +401,27 @@ uv run feicms mcp-config            # 打印可粘贴的客户端配置
 }
 ```
 
-暴露的工具：
+暴露的工具（全部只读）：
 
-| 工具 | 权限 | 说明 |
+| 工具 | 说明 | 主要参数 |
 | --- | --- | --- |
-| `search_videos` | read | 跨站点合并后的搜索，返回本地海报路径 |
-| `get_video` | read | 视频详情 + 所有播放源 |
-| `list_categories` | read | 分类及数量 |
-| `list_sources` | read | 资源站列表与健康状态 |
-| `get_stats` | read | 总览统计 |
-| `provide_feed` | read | 资源站兼容格式（`ac=list`）输出 |
-| `check_health` | write | 探测所有站点并更新健康状态 |
-| `collect_sources` | write | 采集（`pages=0` 全量） |
-| `image_stats` | read | 海报库统计 |
-| `download_images` | write | 下载一批海报 |
+| `search` | 关键词检索（标题 / 简介 / 演员 / 导演 / 分类 / 地区 / 年份 全文匹配），返回 id + 简介摘要 | `query`, `type_name`, `year`, `area`, `sort`, `limit`, `offset` |
+| `get_document` | 单条影片作为纯文本文档（标题、分类、年份、导演、主演、简介、备注），适合喂模型或 embedding | `video_id` |
+| `browse` | 按分类 / 年份 / 地区分页浏览，没有关键词时用这个 | `type_name`, `year`, `area`, `sort`, `limit`, `offset` |
+| `related` | 标题相关的条目（同系列 / 同名），扩展检索上下文 | `video_id`, `limit` |
+| `read_chunks` | 批量导出文档分块，灌进向量库 / RAG 索引 | `type_name`, `limit`（≤500）, `offset` |
+| `list_types` | 分类及每个分类的条数 | - |
+| `get_stats` | 库规模、分类分布、最后更新时间 | - |
+
+另外有三个 MCP resources：`feicms://stats`、`feicms://types`、`feicms://instructions`（使用说明）。
+
+把整库灌进向量库（每批最多 500 条）：
+
+```bash
+curl -s -X POST http://localhost:8000/mcp \
+  -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_chunks","arguments":{"limit":500,"offset":0}}}'
+```
 
 stdio 模式直接读同一个 `.env` 和数据库，属于本地可信进程；远程访问请用 HTTP 端点 + API key。
 

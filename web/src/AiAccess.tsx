@@ -135,7 +135,8 @@ export default function AiAccess({ notify }: { notify: Notify }) {
         <div className="card-body">
           <h2 className="card-title">对外访问密钥（API Key）</h2>
           <p className="muted">
-            同一个 key 既能访问 <span className="mono">/api/*</span>，也能访问 MCP 服务 <span className="mono">/mcp</span>。
+            给 AI 客户端 / RAG 服务用的 key 选 <span className="mono">read</span> 就够：MCP 工具全部只读。
+            <span className="mono">write</span> key 只用于内部自动化（采集、改源、海报下载等 <span className="mono">/api/*</span> 维护接口）。
             数据库只存 sha256 哈希，明文只在创建时显示一次，丢了只能重新创建。
           </p>
 
@@ -230,15 +231,16 @@ export default function AiAccess({ notify }: { notify: Notify }) {
       {/* ------------------------------------------------ MCP 使用说明 */}
       <div className="card bg-base-100 border border-base-300 mt-1.5">
         <div className="card-body">
-          <h2 className="card-title">MCP server 使用说明</h2>
+          <h2 className="card-title">MCP server：只读的影片 RAG 库</h2>
           <p className="muted">
-            MCP（Model Context Protocol）让 Claude / OpenCode / Cursor 这类 AI 客户端直接查询你的采集库：搜索影片、
-            查看播放源、列出资源站、触发采集。服务有两种传输方式，工具集完全相同。
+            MCP 这一层只读，把采集好的影片库暴露成「检索 → 文档 → 分块」，给 Claude / OpenCode / Cursor
+            这类客户端做 RAG 问答。采集、健康检查、海报下载、增删资源站这些维护动作不在 MCP 里，只留在管理面板、
+            CLI 和 <span className="mono">/api/*</span>（需要管理员账号或 <span className="mono">write</span> key）。
           </p>
 
           <ol className="mt-2">
             <li>
-              在上面创建一个 key（AI 用建议 <span className="mono">read</span>，避免误触发采集）。
+              在上面创建一个 <span className="mono">read</span> key（AI 客户端只需要只读）。
             </li>
             <li>
               把 key 填进客户端配置。HTTP 方式需要 header <span className="mono">X-API-Key: fk_…</span>（也支持
@@ -276,6 +278,17 @@ export default function AiAccess({ notify }: { notify: Notify }) {
           </div>
 
           <div className="mt-3">
+            <h3 className="muted">典型 RAG 流程</h3>
+            <ol className="muted">
+              <li><span className="mono">get_stats</span> / <span className="mono">list_types</span> — 库有多大、有哪些分类</li>
+              <li><span className="mono">search(query=…)</span> — 关键词检索，拿到 id 和简介摘要</li>
+              <li><span className="mono">get_document(video_id)</span> — 取单条纯文本文档，用于回答 / 引用</li>
+              <li><span className="mono">related(video_id)</span> — 相关条目，扩展上下文</li>
+              <li><span className="mono">read_chunks(limit, offset)</span> — 批量导出分块，灌入向量库</li>
+            </ol>
+          </div>
+
+          <div className="mt-3">
             <h3 className="muted">手动验证（curl）</h3>
             <pre className="mono bg-base-200 rounded-box p-3 whitespace-pre-wrap">
               {`# 工具列表
@@ -283,10 +296,15 @@ curl -s -X POST ${origin}/mcp \\
   -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 
-# 搜索影片
+# 检索影片
 curl -s -X POST ${origin}/mcp \\
   -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_videos","arguments":{"query":"流浪地球","limit":5}}}'`}
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"流浪地球","limit":5}}}'
+
+# 导出分块（灌向量库）
+curl -s -X POST ${origin}/mcp \\
+  -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_chunks","arguments":{"limit":200,"offset":0}}}'`}
             </pre>
           </div>
         </div>
@@ -301,7 +319,6 @@ curl -s -X POST ${origin}/mcp \\
               <tr>
                 <th>工具</th>
                 <th>说明</th>
-                <th>需要的权限</th>
               </tr>
             </thead>
             <tbody>
@@ -309,15 +326,15 @@ curl -s -X POST ${origin}/mcp \\
                 <tr key={tool.name}>
                   <td className="mono">{tool.name}</td>
                   <td>{tool.description}</td>
-                  <td className="mono">{tool.scopes.join(", ")}</td>
                 </tr>
               ))}
-              {!tools.length && <tr><td colSpan={3} className="muted">读取失败，点上面的「测试 MCP 连接」重试。</td></tr>}
+              {!tools.length && <tr><td colSpan={2} className="muted">读取失败，点上面的「测试 MCP 连接」重试。</td></tr>}
             </tbody>
           </table>
           <p className="muted mt-2">
-            只读 key 调用采集类工具会返回权限错误；只有管理员账号（<span className="mono">FEICMS_ADMIN_USER</span>）
-            能创建/删除 key。
+            工具全部只读，所以 <span className="mono">read</span> key 就够用；采集 / 改源 / 海报下载等维护操作
+            只在管理面板和 CLI 里，MCP 不会暴露。只有管理员账号（<span className="mono">FEICMS_ADMIN_USER</span>）
+            能创建 / 删除 key。
           </p>
         </div>
       </div>

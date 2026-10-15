@@ -52,28 +52,56 @@ def test_call_read_tool():
     client = _client()
     result = _rpc(client, "tools/call", {"name": "get_stats"})["result"]
     assert not result.get("isError", False)
-    assert "sources" in result["structuredContent"]
+    assert "videos" in result["structuredContent"]
 
-    search = _rpc(client, "tools/call", {"name": "search_videos", "arguments": {"limit": 5}})["result"]
+    search = _rpc(client, "tools/call", {"name": "search", "arguments": {"limit": 5}})["result"]
     assert isinstance(search["structuredContent"]["items"], list)
 
     resources = _rpc(client, "resources/list")["result"]["resources"]
     assert any(r["uri"] == "feicms://stats" for r in resources)
     read = _rpc(client, "resources/read", {"uri": "feicms://stats"})["result"]["contents"][0]
     assert read["mimeType"] == "application/json"
+    instructions = _rpc(client, "resources/read", {"uri": "feicms://instructions"})["result"]["contents"][0]
+    assert "只读" in instructions["text"]
 
 
-def test_read_only_key_cannot_call_write_tools():
+def test_documents_and_chunks_are_text():
+    client = _client()
+    items = _rpc(client, "tools/call", {"name": "browse", "arguments": {"limit": 3}})["result"]["structuredContent"]["items"]
+    if not items:
+        return
+    video_id = items[0]["id"]
+
+    document = _rpc(client, "tools/call", {"name": "get_document", "arguments": {"video_id": video_id}})["result"]
+    assert document["structuredContent"]["text"].startswith(items[0]["name"])
+
+    chunks = _rpc(client, "tools/call", {"name": "read_chunks", "arguments": {"limit": 5}})["result"]["structuredContent"]
+    assert len(chunks["chunks"]) <= 5
+    assert all(chunk["text"] for chunk in chunks["chunks"])
+
+    related = _rpc(client, "tools/call", {"name": "related", "arguments": {"video_id": video_id}})["result"]["structuredContent"]
+    assert isinstance(related["items"], list)
+
+
+def test_mcp_exposes_no_maintenance_tools():
+    client = _client()
+    for mutating in ("collect_sources", "check_health", "download_images", "provide_feed"):
+        assert "error" in _rpc(client, "tools/call", {"name": mutating})
+    assert all(set(tool["scopes"]) == {"read"} for tool in client.get("/api/mcp/tools").json())
+
+
+def test_key_scopes_are_enforced():
     client = _client()
     _, plain = asyncio.run(create_api_key(name="ai", scopes="read"))
     headers = {"X-API-Key": plain}
 
-    ok = _rpc(client, "tools/call", {"name": "get_stats"}, headers)["result"]
+    ok = _rpc(client, "tools/call", {"name": "search", "arguments": {"limit": 3}}, headers)["result"]
     assert not ok.get("isError", False)
 
-    denied = _rpc(client, "tools/call", {"name": "collect_sources"}, headers)["result"]
-    assert denied["isError"] is True
-    assert "权限" in denied["content"][0]["text"]
+    # MCP is read-only, so even a write key only sees the read tools.
+    _, write = asyncio.run(create_api_key(name="ops", scopes="read,write"))
+    names = {tool["name"] for tool in _rpc(client, "tools/list", headers={"X-API-Key": write})["result"]["tools"]}
+    assert names == TOOL_NAMES
 
 
 def test_mcp_requires_auth_when_credentials_exist():
