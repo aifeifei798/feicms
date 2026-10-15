@@ -33,6 +33,24 @@ def test_parse_play_url_skips_non_http():
     assert len(plays[0].episodes) == 1
 
 
+def test_parse_play_url_dollar_dollar_dollar_lines():
+    # Most sites put several play lines in one field, separated by `$$$`.
+    plays = parse_play_url(
+        "hnyun$$$hnm3u8",
+        "全集完结$https://hn.bfvvs.com/play/bqxVlKRa$$$全集完结$https://hn.bfvvs.com/play/bqxVlKRa/index.m3u8",
+    )
+    assert [p.from_name for p in plays] == ["hnyun", "hnm3u8"]
+    assert plays[0].episodes[0].url == "https://hn.bfvvs.com/play/bqxVlKRa"
+    assert plays[1].episodes[0].url == "https://hn.bfvvs.com/play/bqxVlKRa/index.m3u8"
+
+
+def test_parse_play_url_bare_urls_get_episode_names():
+    plays = parse_play_url("ggsndf", "https://a/1.m3u8#https://a/2.m3u8#https://a/1.m3u8")
+    assert len(plays) == 1
+    assert [e.name for e in plays[0].episodes] == ["正片", "第2集"]
+    assert len(plays[0].episodes) == 2
+
+
 def test_normalize_item_basic():
     item = normalize_item(
         {

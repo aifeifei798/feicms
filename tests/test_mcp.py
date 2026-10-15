@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi.testclient import TestClient
 
 from feicms.api import app
 from feicms.apikeys import create_api_key, delete_api_key, list_api_keys
 from feicms.config import settings
-from feicms.db import init_db
+from feicms.db import init_db, session
 from feicms.mcp import TOOL_NAMES, handle_rpc
+from feicms.models import Source, SourceItem, Video
+from feicms.normalizer import build_signature
 
 
 def _clear_keys() -> None:
@@ -81,6 +84,67 @@ def test_documents_and_chunks_are_text():
 
     related = _rpc(client, "tools/call", {"name": "related", "arguments": {"video_id": video_id}})["result"]["structuredContent"]
     assert isinstance(related["items"], list)
+
+
+def test_play_urls_are_included_in_documents():
+    async def _seed() -> int:
+        await init_db()
+        async with session() as s:
+            source = Source(name="MCP 测试站", url="https://mcp.example.com/api.php")
+            s.add(source)
+            await s.flush()
+            video = Video(name="MCP 播放源测试", signature=build_signature("MCP 播放源测试"))
+            s.add(video)
+            await s.flush()
+            s.add(
+                SourceItem(
+                    source_id=source.id,
+                    video_id=video.id,
+                    source_vod_id=1,
+                    name="MCP 播放源测试",
+                    play_from="line1,line2",
+                    plays=json.dumps(
+                        [
+                            {
+                                "from": "line1",
+                                "episodes": [
+                                    {"name": "第1集", "url": "https://v.example.com/1.mp4"},
+                                    {"name": "第2集", "url": "https://v.example.com/2.mp4"},
+                                ],
+                            },
+                            {"from": "line2", "episodes": [{"name": "正片", "url": "https://v.example.com/single.mp4"}]},
+                        ]
+                    ),
+                )
+            )
+            await s.commit()
+            return video.id
+
+    video_id = asyncio.run(_seed())
+    client = _client()
+
+    document = _rpc(client, "tools/call", {"name": "get_document", "arguments": {"video_id": video_id}})["result"]["structuredContent"]
+    assert "共 2 集" in document["text"]
+    assert "https://v.example.com/1.mp4" in document["text"]
+    assert "https://v.example.com/single.mp4" in document["text"]
+
+    compact = _rpc(client, "tools/call", {"name": "get_document", "arguments": {"video_id": video_id, "include_urls": False}})["result"]["structuredContent"]
+    assert "https://v.example.com" not in compact["text"]
+
+    plays = _rpc(client, "tools/call", {"name": "get_plays", "arguments": {"video_id": video_id}})["result"]["structuredContent"]
+    assert plays["play_sources"] == 2
+    assert plays["episode_count"] == 3
+    assert plays["plays"][0]["source"] == "MCP 测试站"
+    assert plays["plays"][0]["episodes"][1]["url"] == "https://v.example.com/2.mp4"
+
+    search = _rpc(client, "tools/call", {"name": "search", "arguments": {"query": "MCP 播放源测试"}})["result"]["structuredContent"]
+    assert search["items"][0]["episode_count"] == 3
+    assert search["items"][0]["first_url"] == "https://v.example.com/1.mp4"
+
+    chunks = _rpc(client, "tools/call", {"name": "read_chunks", "arguments": {"limit": 500, "include_urls": True}})["result"]["structuredContent"]
+    matched = [c for c in chunks["chunks"] if c["id"] == video_id]
+    if matched:
+        assert "https://v.example.com/1.mp4" in matched[0]["text"]
 
 
 def test_mcp_exposes_no_maintenance_tools():

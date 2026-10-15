@@ -145,6 +145,7 @@ feicms collect [--name|--pages|--full|--include-disabled]
 feicms health                      # 探测所有启用站点
 feicms stats                       # 统计
 feicms prune                       # 删除无播放源记录 / 孤儿影片
+feicms repair-plays                # 用当前解析规则重建播放源结构 + 清理文本字段（不联网）
 feicms export [--out backup.jsonl]
 
 feicms images scan                 # 登记所有 pic 字段（不联网）
@@ -405,11 +406,12 @@ uv run feicms mcp-config            # 打印可粘贴的客户端配置
 
 | 工具 | 说明 | 主要参数 |
 | --- | --- | --- |
-| `search` | 关键词检索（标题 / 简介 / 演员 / 导演 / 分类 / 地区 / 年份 全文匹配），返回 id + 简介摘要 | `query`, `type_name`, `year`, `area`, `sort`, `limit`, `offset` |
-| `get_document` | 单条影片作为纯文本文档（标题、分类、年份、导演、主演、简介、备注），适合喂模型或 embedding | `video_id` |
+| `search` | 关键词检索（标题 / 简介 / 演员 / 导演 / 分类 / 地区 / 年份 全文匹配），返回 id + 简介摘要 + 播放源数量 / 总集数 / `first_url` | `query`, `type_name`, `year`, `area`, `sort`, `limit`, `offset` |
+| `get_document` | 单条影片作为纯文本文档（标题、分类、年份、导演、主演、简介、备注 + **播放源 URL**），适合喂模型或 embedding | `video_id`, `max_episodes`（每个线路最多列出几集，默认 60）, `include_urls` |
+| `get_plays` | 某条影片的全部播放源，结构化返回：站点名、线路名、集数、每集 `name` + `url`（单集和多集都支持） | `video_id`, `limit` |
 | `browse` | 按分类 / 年份 / 地区分页浏览，没有关键词时用这个 | `type_name`, `year`, `area`, `sort`, `limit`, `offset` |
 | `related` | 标题相关的条目（同系列 / 同名），扩展检索上下文 | `video_id`, `limit` |
-| `read_chunks` | 批量导出文档分块，灌进向量库 / RAG 索引 | `type_name`, `limit`（≤500）, `offset` |
+| `read_chunks` | 批量导出文档分块，灌进向量库 / RAG 索引（默认只带线路名 + 集数摘要，`include_urls=true` 带每集 URL） | `type_name`, `limit`（≤500）, `offset`, `include_urls`, `max_episodes` |
 | `list_types` | 分类及每个分类的条数 | - |
 | `get_stats` | 库规模、分类分布、最后更新时间 | - |
 

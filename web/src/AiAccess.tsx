@@ -281,8 +281,9 @@ export default function AiAccess({ notify }: { notify: Notify }) {
             <h3 className="muted">典型 RAG 流程</h3>
             <ol className="muted">
               <li><span className="mono">get_stats</span> / <span className="mono">list_types</span> — 库有多大、有哪些分类</li>
-              <li><span className="mono">search(query=…)</span> — 关键词检索，拿到 id 和简介摘要</li>
-              <li><span className="mono">get_document(video_id)</span> — 取单条纯文本文档，用于回答 / 引用</li>
+              <li><span className="mono">search(query=…)</span> — 关键词检索，拿到 id、简介摘要、播放源数量与总集数</li>
+              <li><span className="mono">get_document(video_id)</span> — 取单条纯文本文档（含播放源 URL），用于回答 / 引用</li>
+              <li><span className="mono">get_plays(video_id)</span> — 全部线路：站点名、线路名、每集 name + URL（单集 / 多集都支持）</li>
               <li><span className="mono">related(video_id)</span> — 相关条目，扩展上下文</li>
               <li><span className="mono">read_chunks(limit, offset)</span> — 批量导出分块，灌入向量库</li>
             </ol>
@@ -301,10 +302,20 @@ curl -s -X POST ${origin}/mcp \\
   -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"流浪地球","limit":5}}}'
 
+# 取一条影片的文档（含播放源 URL）
+curl -s -X POST ${origin}/mcp \\
+  -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_document","arguments":{"video_id":123,"max_episodes":20}}}'
+
+# 全部播放线路 / 每集 URL
+curl -s -X POST ${origin}/mcp \\
+  -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_plays","arguments":{"video_id":123}}}'
+
 # 导出分块（灌向量库）
 curl -s -X POST ${origin}/mcp \\
   -H "X-API-Key: fk_..." -H 'Content-Type: application/json' \\
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_chunks","arguments":{"limit":200,"offset":0}}}'`}
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_chunks","arguments":{"limit":200,"offset":0}}}'`}
             </pre>
           </div>
         </div>

@@ -9,6 +9,7 @@ Supported shapes:
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import unicodedata
@@ -25,6 +26,10 @@ except ImportError:  # pragma: no cover - optional
 YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 EPISODE_SPLIT = re.compile(r"[#|]")
 NAME_URL_SPLIT = re.compile(r"(?:\$|::|:)")
+# Many sites list several play lines in one field, separated by `$$$`:
+#   vod_play_from = "hnyun$$$hnm3u8"
+#   vod_play_url  = "全集完结$https://a/play/x$$$全集完结$https://b/x/index.m3u8"
+SOURCE_SPLIT = re.compile(r"\s*\$\$\$\s*")
 
 
 @dataclass
@@ -78,9 +83,11 @@ class VodItem:
 def clean_text(value: Any) -> str:
     if value is None:
         return ""
-    text = str(value).strip()
-    text = text.replace("\r", "").replace("\n", " ")
-    return unicodedata.normalize("NFKC", text)
+    text = html.unescape(str(value))
+    text = re.sub(r"<[^>]+>", " ", text)  # sites often embed markup in descriptions
+    text = text.replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"\s+", " ", text)
+    return unicodedata.normalize("NFKC", text).strip()
 
 
 def build_signature(name: str, year: str = "") -> str:
@@ -103,41 +110,73 @@ def guess_year(name: str, explicit: str = "") -> str:
     return matches[-1] if matches else ""
 
 
+def _episode_from_part(part: str) -> Episode | None:
+    """Parse one `name$url` (or bare url) episode fragment."""
+    part = part.strip().strip("#|")
+    if not part:
+        return None
+    if part.startswith(("http", "//")):
+        name, url = "", part
+    elif "$" in part:
+        name, url = part.split("$", 1)
+        url = url.strip()
+        if not url.startswith(("http", "//")):
+            # junk after the first `$`, e.g. "url$$$全集完结$https://..."
+            candidate = next((p for p in part.split("$") if p.startswith(("http", "//"))), "")
+            if not candidate:
+                return None
+            name, url = "", candidate
+    else:
+        m = NAME_URL_SPLIT.search(part)
+        if m and "http" in part[m.end():]:
+            name, url = part[: m.start()], part[m.end():]
+        else:
+            name, url = "", part
+    url = url.strip().strip("#|")
+    if not url.startswith(("http", "//")):
+        return None
+    return Episode(name=name.strip(), url=url)
+
+
 def parse_play_url(play_from: str, play_url: str) -> list[PlaySource]:
-    """Turn `vod_play_from` / `vod_play_url` into structured sources."""
-    froms = [f.strip() for f in clean_text(play_from).split(",") if f.strip()]
+    """Turn `vod_play_from` / `vod_play_url` into structured sources.
+
+    Play lines are separated by `$$$` (most sites) or `,`; episodes inside one
+    line are separated by `#` or `|`. Single-episode entries and long episode
+    lists are both handled.
+    """
+    froms = [f.strip() for f in SOURCE_SPLIT.split(clean_text(play_from)) if f.strip()]
+    if len(froms) <= 1:
+        parts = [f.strip() for f in clean_text(play_from).split(",") if f.strip()]
+        if len(parts) > len(froms):
+            froms = parts
+
     raw = clean_text(play_url)
     if not raw:
         return []
 
-    # Some sites separate sources with a comma; others just concatenate with '#'.
-    if len(froms) > 1 and "," in raw:
-        chunks = raw.split(",")
-    else:
+    chunks = [c for c in SOURCE_SPLIT.split(raw) if c.strip()]
+    if len(chunks) != len(froms) and len(froms) > 1 and "," in raw:
+        chunks = [c for c in raw.split(",") if c.strip()]
+    if len(chunks) > len(froms):
+        froms = froms + [f"line{i + 1}" for i in range(len(chunks) - len(froms))]
+    elif len(chunks) < len(froms):
         chunks = [raw]
-    if len(chunks) != len(froms):
-        chunks = [raw] * max(1, len(froms)) if len(froms) > 1 else [raw]
+        froms = froms[:1] or ["default"]
 
     result: list[PlaySource] = []
     for idx, chunk in enumerate(chunks):
         from_name = froms[idx] if idx < len(froms) else (froms[0] if froms else "default")
         episodes: list[Episode] = []
+        seen: set[str] = set()
         for part in EPISODE_SPLIT.split(chunk):
-            part = part.strip()
-            if not part:
+            episode = _episode_from_part(part)
+            if episode is None or episode.url in seen:
                 continue
-            if "$" in part:
-                name, url = part.split("$", 1)
-            else:
-                m = NAME_URL_SPLIT.search(part)
-                if m and "http" in part[m.end():]:
-                    name, url = part[: m.start()], part[m.end():]
-                else:
-                    name, url = "", part
-            url = url.strip()
-            if not url.startswith(("http", "//")):
-                continue
-            episodes.append(Episode(name=name.strip() or f"第{len(episodes) + 1}集", url=url))
+            seen.add(episode.url)
+            if not episode.name:
+                episode.name = "正片" if not episodes else f"第{len(episodes) + 1}集"
+            episodes.append(episode)
         if episodes:
             result.append(PlaySource(from_name=from_name, episodes=episodes))
     return result

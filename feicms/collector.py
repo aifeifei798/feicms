@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .fetcher import Fetcher, build_query, fetch
 from .models import CollectJob, Source, SourceItem, SourceType, Video
-from .normalizer import VodItem, clean_text, parse_raw_items, parse_response
+from .normalizer import VodItem, clean_text, parse_play_url, parse_raw_items, parse_response
 from .db import session
 
 
@@ -285,3 +285,38 @@ async def collect_all(
 
     results = await asyncio.gather(*(run(src) for src in sources))
     return results
+
+
+async def repair_plays() -> dict[str, int]:
+    """Re-parse every stored `play_from` / `play_url` with the current parser.
+
+    Useful after the parser improves: raw fields are kept on `source_items`, so
+    the structured `plays` JSON can always be rebuilt without re-fetching. Text
+    columns are re-cleaned at the same time (HTML entities, stray markup).
+    """
+    changed = 0
+    total = 0
+    async with session() as s:
+        items = list(await s.scalars(select(SourceItem)))
+        for item in items:
+            total += 1
+            plays = parse_play_url(item.play_from, item.play_url)
+            new = json.dumps([p.as_dict() for p in plays], ensure_ascii=False)
+            if new != (item.plays or "[]"):
+                item.plays = new
+                changed += 1
+            for field_name in ("name", "type_name", "year", "area", "lang", "pic", "blurb", "actor", "director", "remarks"):
+                old = getattr(item, field_name) or ""
+                cleaned = clean_text(old)
+                if cleaned != old:
+                    setattr(item, field_name, cleaned)
+
+        videos = list(await s.scalars(select(Video)))
+        for video in videos:
+            for field_name in ("name", "type_name", "area", "lang", "category", "blurb", "actor", "director", "remarks"):
+                old = getattr(video, field_name) or ""
+                cleaned = clean_text(old)
+                if cleaned != old:
+                    setattr(video, field_name, cleaned)
+        await s.commit()
+    return {"total": total, "changed": changed, "videos": len(videos)}

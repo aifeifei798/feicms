@@ -17,7 +17,7 @@ from .auth import (
     require_admin,
     require_auth,
 )
-from .collector import collect_all, collect_source
+from .collector import collect_all, collect_source, repair_plays
 from .config import settings
 from .db import session
 from .health import health_check_all
@@ -615,6 +615,12 @@ async def prune() -> dict[str, int]:
         for video in orphans:
             await s.delete(video)
     return {"removed": len(rows), "orphan_videos": len(orphans)}
+
+
+@router.post("/repair-plays")
+async def repair_plays_endpoint() -> dict[str, int]:
+    """Re-parse stored `play_from` / `play_url` into structured play sources."""
+    return await repair_plays()
 
 
 @router.get("/jobs")

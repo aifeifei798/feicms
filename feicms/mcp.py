@@ -36,7 +36,7 @@ from .apikeys import has_active_keys
 from .auth import Principal, authenticate, auth_enabled
 from .config import settings
 from .db import init_db, session
-from .models import Video
+from .models import Source, SourceItem, Video
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "feicms", "version": "0.1.0"}
@@ -47,7 +47,7 @@ TOOLS: list[dict[str, Any]] = [
         "name": "search",
         "description": (
             "关键词检索影片库（标题 / 简介 / 演员 / 导演 / 分类 / 地区 / 年份 全文匹配）。"
-            "返回 id、标题、分类、年份、简介摘要、海报，用于 RAG 检索的第一层。"
+            "返回 id、标题、分类、年份、简介摘要、海报，以及播放源数量与总集数（first_url 是第一个线路的第一集 URL）。"
         ),
         "scopes": {"read"},
         "inputSchema": {
@@ -66,11 +66,32 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "get_document",
-        "description": "取一条影片记录作为纯文本文档（标题、分类、年份、地区、导演、主演、简介、备注），适合喂给模型或做 embedding。",
+        "description": (
+            "取一条影片记录作为纯文本文档（标题、分类、年份、地区、导演、主演、简介、备注 + 播放源 URL）。"
+            "单集直接给 URL，多集会列出每集 name + URL（默认最多 60 集，超出部分用 get_plays 拿全量）。"
+        ),
         "scopes": {"read"},
         "inputSchema": {
             "type": "object",
-            "properties": {"video_id": {"type": "integer", "description": "影片 id（来自 search 结果）"}},
+            "properties": {
+                "video_id": {"type": "integer", "description": "影片 id（来自 search 结果）"},
+                "max_episodes": {"type": "integer", "minimum": 1, "maximum": 500, "default": 60, "description": "每个播放源最多列出多少集"},
+                "include_urls": {"type": "boolean", "default": True, "description": "是否包含播放 URL（false 只给线路名和集数）"},
+            },
+            "required": ["video_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_plays",
+        "description": "某条影片的全部播放源，结构化返回：站点名、线路名(from)、集数、每集 name + URL。单集和多集都支持。",
+        "scopes": {"read"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "video_id": {"type": "integer", "description": "影片 id"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "最多返回多少个播放源（线路）"},
+            },
             "required": ["video_id"],
             "additionalProperties": False,
         },
@@ -108,7 +129,10 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "read_chunks",
-        "description": "批量导出影片文档分块（id + 纯文本），用于把整个库灌进向量数据库 / RAG 索引。按 id 顺序分页。",
+        "description": (
+            "批量导出影片文档分块（id + 纯文本），用于把整个库灌进向量数据库 / RAG 索引。按 id 顺序分页。"
+            "默认只带播放源摘要（线路名 + 集数，单集带 URL）；include_urls=true 时带完整每集 URL（体积大）。"
+        ),
         "scopes": {"read"},
         "inputSchema": {
             "type": "object",
@@ -116,6 +140,8 @@ TOOLS: list[dict[str, Any]] = [
                 "type_name": {"type": "string", "description": "只导出某个分类"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "include_urls": {"type": "boolean", "default": False, "description": "分块里是否包含每集播放 URL"},
+                "max_episodes": {"type": "integer", "minimum": 1, "maximum": 200, "default": 30},
             },
             "additionalProperties": False,
         },
@@ -146,10 +172,11 @@ RESOURCES = [
 INSTRUCTIONS = (
     "feicms MCP 是一个只读的影片库。用法：\n"
     "1) get_stats / list_types 了解库有多大、有哪些分类。\n"
-    "2) search(query=...) 关键词检索，返回 id 与简介摘要。\n"
-    "3) get_document(video_id) 取单条纯文本文档，用于回答或引用。\n"
-    "4) related(video_id) 获取相关条目，扩展上下文。\n"
-    "5) read_chunks(limit, offset) 批量导出文档分块，灌入向量库。\n"
+    "2) search(query=...) 关键词检索，返回 id、简介摘要、播放源数量与总集数。\n"
+    "3) get_document(video_id) 取单条纯文本文档（含播放源 URL），用于回答或引用。\n"
+    "4) get_plays(video_id) 拿全部播放源：站点、线路、每集 name + URL（单集和多集都支持）。\n"
+    "5) related(video_id) 获取相关条目，扩展上下文。\n"
+    "6) read_chunks(limit, offset) 批量导出文档分块，灌入向量库。\n"
     "所有工具只读，不会采集、写入或删除任何数据。"
 )
 
@@ -158,7 +185,81 @@ INSTRUCTIONS = (
 _TOKEN_SPLIT = re.compile(r"[\s,./·\-()（）\[\]【】:：!?！]+")
 
 
-def _document(video: Video) -> str:
+def _parse_plays(item: SourceItem, source_name: str) -> list[dict[str, Any]]:
+    """Structured play sources of one raw record: single-episode and multi-episode."""
+    try:
+        entries = json.loads(item.plays or "[]")
+    except json.JSONDecodeError:
+        entries = []
+    plays: list[dict[str, Any]] = []
+    for entry in entries:
+        episodes = entry.get("episodes") or []
+        if not episodes:
+            continue
+        line = (entry.get("from") or item.play_from or "").strip()
+        plays.append(
+            {
+                "source": source_name,
+                "line": line,
+                "episode_count": len(episodes),
+                "episodes": [
+                    {"name": (ep.get("name") or f"第{i + 1}集").strip(), "url": (ep.get("url") or "").strip()}
+                    for i, ep in enumerate(episodes)
+                ],
+            }
+        )
+    return plays
+
+
+async def _plays_for(s, video_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Play sources for several videos in one query, keyed by video id."""
+    result: dict[int, list[dict[str, Any]]] = {vid: [] for vid in video_ids}
+    if not video_ids:
+        return result
+    rows = list(
+        await s.execute(
+            select(SourceItem, Source.name)
+            .join(Source, Source.id == SourceItem.source_id)
+            .where(SourceItem.video_id.in_(video_ids))
+            .order_by(Source.name)
+        )
+    )
+    for item, source_name in rows:
+        result[item.video_id].extend(_parse_plays(item, source_name))
+    return result
+
+
+def _play_lines(plays: list[dict[str, Any]], max_episodes: int = 60, include_urls: bool = True) -> list[str]:
+    """Render play sources as text: one URL for single episodes, one line per episode for series."""
+    if not plays:
+        return []
+    lines = ["播放源:"]
+    for play in plays:
+        label = play["source"] or play["line"] or "未知站点"
+        if play["line"] and play["line"] != label:
+            label = f"{label} / {play['line']}"
+        if play["episode_count"] == 1:
+            if include_urls:
+                lines.append(f"- {label}: {play['episodes'][0]['url']}")
+            else:
+                lines.append(f"- {label}（1 集）")
+            continue
+        lines.append(f"- {label}（共 {play['episode_count']} 集）")
+        if not include_urls:
+            continue
+        for episode in play["episodes"][:max_episodes]:
+            lines.append(f"    {episode['name']}: {episode['url']}")
+        if play["episode_count"] > max_episodes:
+            lines.append(f"    … 其余 {play['episode_count'] - max_episodes} 集用 get_plays 获取")
+    return lines
+
+
+def _document(
+    video: Video,
+    plays: list[dict[str, Any]] | None = None,
+    max_episodes: int = 60,
+    include_urls: bool = True,
+) -> str:
     """Plain-text document for RAG: one record, human and model readable."""
     parts = [video.name]
     meta = " · ".join(x for x in (video.type_name, video.year, video.area, video.lang, video.category) if x)
@@ -174,10 +275,14 @@ def _document(video: Video) -> str:
         parts.append(f"备注: {video.remarks}")
     updated = video.last_updated.strftime("%Y-%m-%d") if video.last_updated else ""
     parts.append(f"来源: {video.source_count} 个资源站" + (f" · 更新: {updated}" if updated else ""))
+    lines = _play_lines(plays or [], max_episodes=max_episodes, include_urls=include_urls)
+    if lines:
+        parts.append("\n".join(lines))
     return "\n".join(parts)
 
 
-def _summary(video: Video, pic: str | None) -> dict[str, Any]:
+def _summary(video: Video, pic: str | None, plays: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    plays = plays or []
     blurb = (video.blurb or "").strip()
     return {
         "id": video.id,
@@ -192,6 +297,12 @@ def _summary(video: Video, pic: str | None) -> dict[str, Any]:
         "local_pic": pic,
         "source_count": video.source_count,
         "last_updated": video.last_updated.isoformat() if video.last_updated else None,
+        "play_sources": len(plays),
+        "episode_count": sum(p["episode_count"] for p in plays),
+        "play_lines": [
+            {"source": p["source"], "line": p["line"], "episodes": p["episode_count"]} for p in plays[:10]
+        ],
+        "first_url": plays[0]["episodes"][0]["url"] if plays else None,
     }
 
 
@@ -240,12 +351,13 @@ async def _search(
         }[sort]
         videos = list(await s.scalars(stmt.order_by(order).limit(limit).offset(offset)))
         pic_map = await _local_pic_map(s, [v.pic for v in videos])
+        plays_map = await _plays_for(s, [v.id for v in videos])
 
     return {
         "total": total or 0,
         "offset": offset,
         "limit": limit,
-        "items": [_summary(v, _local_pic(v, pic_map)) for v in videos],
+        "items": [_summary(v, _local_pic(v, pic_map), plays_map.get(v.id, [])) for v in videos],
     }
 
 
@@ -260,17 +372,36 @@ async def _browse(
     return await _search(query=None, type_name=type_name, year=year, area=area, sort=sort, limit=limit, offset=offset)
 
 
-async def _get_document(video_id: int) -> dict[str, Any]:
+async def _get_document(video_id: int, max_episodes: int = 60, include_urls: bool = True) -> dict[str, Any]:
+    max_episodes = max(1, min(int(max_episodes or 60), 500))
     async with session() as s:
         video = await s.get(Video, int(video_id))
         if video is None:
             return {"error": f"video {video_id} not found"}
         pic_map = await _local_pic_map(s, [video.pic])
+        plays = (await _plays_for(s, [video.id])).get(video.id, [])
     return {
         "id": video.id,
         "name": video.name,
-        "text": _document(video),
-        "meta": _summary(video, _local_pic(video, pic_map)),
+        "text": _document(video, plays, max_episodes=max_episodes, include_urls=include_urls),
+        "meta": _summary(video, _local_pic(video, pic_map), plays),
+        "plays": plays,
+    }
+
+
+async def _get_plays(video_id: int, limit: int = 50) -> dict[str, Any]:
+    limit = max(1, min(int(limit or 50), 200))
+    async with session() as s:
+        video = await s.get(Video, int(video_id))
+        if video is None:
+            return {"error": f"video {video_id} not found"}
+        plays = (await _plays_for(s, [video.id])).get(video.id, [])
+    return {
+        "video_id": video.id,
+        "name": video.name,
+        "play_sources": len(plays),
+        "episode_count": sum(p["episode_count"] for p in plays),
+        "plays": plays[:limit],
     }
 
 
@@ -303,29 +434,47 @@ async def _related(video_id: int, limit: int = 10) -> dict[str, Any]:
                     break
 
         pic_map = await _local_pic_map(s, [v.pic for v in found])
+        plays_map = await _plays_for(s, [v.id for v in found])
 
     return {
         "video_id": video_id,
         "name": video.name,
         "tokens": tokens,
-        "items": [_summary(v, _local_pic(v, pic_map)) for v in found],
+        "items": [_summary(v, _local_pic(v, pic_map), plays_map.get(v.id, [])) for v in found],
     }
 
 
-async def _read_chunks(type_name: str | None = None, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+async def _read_chunks(
+    type_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    include_urls: bool = False,
+    max_episodes: int = 30,
+) -> dict[str, Any]:
     limit = max(1, min(int(limit or 100), 500))
     offset = max(0, int(offset or 0))
+    max_episodes = max(1, min(int(max_episodes or 30), 200))
     async with session() as s:
         stmt = select(Video)
         if type_name:
             stmt = stmt.where(Video.type_name == type_name)
         total = await s.scalar(select(func.count()).select_from(stmt.subquery()))
         videos = list(await s.scalars(stmt.order_by(Video.id).limit(limit).offset(offset)))
+        plays_map = await _plays_for(s, [v.id for v in videos])
     return {
         "total": total or 0,
         "offset": offset,
         "limit": limit,
-        "chunks": [{"id": v.id, "name": v.name, "type_name": v.type_name, "text": _document(v)} for v in videos],
+        "chunks": [
+            {
+                "id": v.id,
+                "name": v.name,
+                "type_name": v.type_name,
+                "episode_count": sum(p["episode_count"] for p in plays_map.get(v.id, [])),
+                "text": _document(v, plays_map.get(v.id, []), max_episodes=max_episodes, include_urls=include_urls),
+            }
+            for v in videos
+        ],
     }
 
 
@@ -359,6 +508,7 @@ async def _get_stats() -> dict[str, Any]:
 HANDLERS: dict[str, Any] = {
     "search": _search,
     "get_document": _get_document,
+    "get_plays": _get_plays,
     "browse": _browse,
     "related": _related,
     "read_chunks": _read_chunks,

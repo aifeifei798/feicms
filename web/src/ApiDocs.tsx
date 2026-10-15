@@ -398,6 +398,12 @@ const GROUPS: Group[] = [
         summary: "清理无播放源的采集记录与孤儿影片",
         example: "curl -X POST http://127.0.0.1:8000/api/prune",
       },
+      {
+        method: "POST",
+        path: "/api/repair-plays",
+        summary: "用当前解析规则重建播放源结构（单集 / 多集）并清理文本字段，不重新采集",
+        example: "curl -X POST http://127.0.0.1:8000/api/repair-plays",
+      },
     ],
   },
   {

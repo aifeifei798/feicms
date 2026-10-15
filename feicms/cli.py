@@ -259,6 +259,21 @@ def prune() -> None:
     asyncio.run(_run())
 
 
+@app.command("repair-plays")
+def repair_plays_cmd() -> None:
+    """用当前播放源解析规则重建 source_items.plays（不重新采集，只重新解析 raw 字段）。"""
+    from .collector import repair_plays
+
+    async def _run() -> None:
+        await init_db()
+        result = await repair_plays()
+        console.print(
+            f"[green]重建 {result['changed']} 条播放源[/green] · 共 {result['total']} 条 raw 记录"
+        )
+
+    asyncio.run(_run())
+
+
 @app.command("add")
 def add_source(
     name: str,
