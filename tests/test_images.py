@@ -212,3 +212,43 @@ def test_image_api_endpoints():
 
     video = test_client.get("/api/videos", params={"q": "海报测试片"}).json()
     assert video["items"][0]["local_pic"], "poster should resolve to a local image"
+
+
+def test_queue_skips_downloaded_and_failed_posters():
+    async def _run() -> None:
+        await init_db()
+        async with session() as s:
+            s.add(Video(name="队列好图", signature=build_signature("队列好图"), pic="https://queue-ok.example.com/a.png"))
+            s.add(Video(name="队列坏图", signature=build_signature("队列坏图"), pic="https://queue-bad.example.com/b.png"))
+        await scan_images()
+
+        client = StubClient({"https://queue-ok.example.com/a.png": PNG})
+        await download_images(limit=50, concurrency=1, client=client)
+
+        bad = await _image_by_url("https://queue-bad.example.com/b.png")
+        assert bad is not None and bad.status == "failed"
+
+        # Stale index: the file is on disk but the row still says "pending".
+        async with session() as s:
+            good = await s.scalar(select(Image).where(Image.url == "https://queue-ok.example.com/a.png"))
+            good.status = "pending"
+            good.attempts = 0
+            calls_before = client.calls
+
+        result = await download_images(limit=50, concurrency=1, client=client)
+        assert client.calls == calls_before  # nothing needed downloading, so no request
+        assert result.skipped >= 1
+        good = await _image_by_url("https://queue-ok.example.com/a.png")
+        assert good.status == "downloaded"
+
+        # failed rows stay out of the queue unless explicitly retried
+        await download_images(limit=50, concurrency=1, client=client)
+        bad = await _image_by_url("https://queue-bad.example.com/b.png")
+        assert bad.status == "failed" and bad.attempts == 1
+
+        retry = StubClient({})
+        await download_images(limit=50, concurrency=1, client=retry, include_failed=True)
+        bad = await _image_by_url("https://queue-bad.example.com/b.png")
+        assert bad.status == "failed" and bad.attempts == 2
+
+    asyncio.run(_run())

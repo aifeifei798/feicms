@@ -241,6 +241,13 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 
 同一进程内不会重叠下载（自动循环与手动「下载一批」互斥）；跨进程靠下载前重新检查该行状态。
 
+**下载队列的语义**（面板「图片库」和 CLI 一致）：
+
+- 只有状态是 `pending` 的行会被排队：**已下载**、**重复**、**失败**的都不会再请求；
+- 失败的海报不会自动重试，要重试点面板的「重试失败的」或 `feicms images download --retry-failed`（显式重试最多 `FEICMS_IMAGE_MAX_ATTEMPTS` 次，之后彻底放弃）；
+- 磁盘上已有文件但索引状态是 `pending` 的行（崩溃/并发留下的不一致）会被自动修正成 `downloaded`，不会重新下载，计入「跳过」；
+- 面板的下载进度卡片默认不列出失败原因，点「失败原因 (N)」才展开。
+
 ---
 
 ## 7. API
@@ -322,7 +329,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_IMAGE_CONCURRENCY` | 8 | 图片并发 |
 | `FEICMS_IMAGE_DELAY` | 0.15 | 图片请求间隔 |
 | `FEICMS_IMAGE_MAX_SIZE` | 2000000 | 单文件最大字节 |
-| `FEICMS_IMAGE_MAX_ATTEMPTS` | 3 | 单图片最大重试 |
+| `FEICMS_IMAGE_MAX_ATTEMPTS` | 3 | 显式重试失败图片时的最大重试次数（失败的不会自动重试） |
 | `FEICMS_IMAGE_AUTO` | false | 后台自动下载图片（默认关闭，手动下载） |
 | `FEICMS_IMAGE_INTERVAL` | 30 | 自动下载间隔（分钟） |
 | `FEICMS_HOST` / `FEICMS_PORT` | `0.0.0.0` / `8000` | 服务监听 |

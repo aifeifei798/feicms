@@ -193,6 +193,12 @@ async def download_images(
 ) -> ImageBatchResult:
     """Download a batch of pending posters. Safe to run repeatedly.
 
+    Only rows still marked `pending` are queued: posters already downloaded,
+    duplicates, and failures are left alone. Rows whose file is already on disk
+    but whose index status is stale are repaired in place instead of re-fetched.
+    `include_failed=True` pulls failed rows back into the queue (up to
+    FEICMS_IMAGE_MAX_ATTEMPTS attempts in total).
+
     Two batches in the same process never overlap (the auto loop and a manual
     "download now" click would otherwise race over the same pending rows).
     """
@@ -223,12 +229,40 @@ async def _download_batch(
     write_lock = asyncio.Lock()
 
     async with session() as s:
-        stmt = select(Image).where(Image.status == "pending")
-        if not include_failed:
-            stmt = stmt.where(Image.attempts < settings.image_max_attempts)
-        pending = list(await s.scalars(stmt.order_by(Image.id).limit(batch)))
+        # Only rows that still need a poster are queued. Rows that are already
+        # downloaded, marked duplicate, or failed are never picked up unless the
+        # caller explicitly asked to retry failures.
+        if include_failed:
+            stmt = select(Image).where(
+                Image.status.in_(("pending", "failed")),
+                Image.attempts < settings.image_max_attempts,
+            )
+        else:
+            stmt = select(Image).where(Image.status == "pending")
+        candidates = list(await s.scalars(stmt.order_by(Image.id).limit(batch * 3)))
+
+        root = Path(settings.image_dir)
+        pending: list[Image] = []
+        repaired = 0
+        for row in candidates:
+            if len(pending) >= batch:
+                break
+            # The file is already on disk (a crash or a manual copy left the index
+            # behind): fix the row instead of spending a request on it.
+            if row.path and (root / row.path).exists():
+                row.status = "downloaded"
+                row.downloaded_at = datetime.now(timezone.utc)
+                row.last_error = None
+                repaired += 1
+                continue
+            if row.status == "failed":
+                # Explicit retry requested: put it back in the queue, the attempt
+                # counter is kept so permanently dead URLs stop being retried.
+                row.status = "pending"
+            pending.append(row)
 
     if not pending:
+        result.skipped += repaired
         _progress.update(
             {
                 "running": False,
@@ -236,7 +270,7 @@ async def _download_batch(
                 "downloaded": 0,
                 "duplicates": 0,
                 "failed": 0,
-                "skipped": 0,
+                "skipped": repaired,
                 "bytes": 0,
                 "finished_at": datetime.now(timezone.utc).isoformat(),
                 "elapsed_ms": 0.0,
@@ -252,7 +286,7 @@ async def _download_batch(
             "downloaded": 0,
             "duplicates": 0,
             "failed": 0,
-            "skipped": 0,
+            "skipped": repaired,
             "bytes": 0,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
@@ -260,6 +294,9 @@ async def _download_batch(
             "errors": [],
         }
     )
+
+    if repaired:
+        result.skipped += repaired
 
     async def process(image: Image) -> None:
         async with sem:
@@ -289,7 +326,9 @@ async def _download_batch(
                     row = await s.get(Image, image.id)
                     if row is not None and not row.path:
                         row.attempts = (row.attempts or 0) + 1
-                        row.status = "failed" if row.attempts >= settings.image_max_attempts else "pending"
+                        # A failed poster is parked: the next "download a batch"
+                        # run will not touch it again until the user asks for a retry.
+                        row.status = "failed"
                         row.last_error = str(exc)[:300]
                 return
 

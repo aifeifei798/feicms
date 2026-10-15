@@ -20,7 +20,7 @@ function humanBytes(bytes: number): string {
 export default function Images({ notify }: { notify: Notify }) {
   const [stats, setStats] = React.useState<ImageStats | null>(null);
   const [images, setImages] = React.useState<ImageRecord[]>([]);
-  const [status, setStatus] = React.useState("");
+  const [status, setStatus] = React.useState("downloaded");
   const [host, setHost] = React.useState("");
   const [batch, setBatch] = React.useState("300");
   const [limit, setLimit] = React.useState("60");
@@ -28,6 +28,7 @@ export default function Images({ notify }: { notify: Notify }) {
   const [busy, setBusy] = React.useState(false);
   const [progress, setProgress] = React.useState<DownloadProgress | null>(null);
   const [layout, setLayout] = React.useState<ImageLayout | null>(null);
+  const [showErrors, setShowErrors] = React.useState(false);
 
   const refreshProgress = React.useCallback(() => {
     api
@@ -118,6 +119,13 @@ export default function Images({ notify }: { notify: Notify }) {
     }
   };
 
+  const chips: Array<[string, string, number]> = [
+    ["downloaded", "已下载", stats?.by_status?.downloaded ?? 0],
+    ["pending", "待下载", stats?.by_status?.pending ?? 0],
+    ["duplicate", "重复", stats?.by_status?.duplicate ?? 0],
+    ["failed", "失败", stats?.by_status?.failed ?? 0],
+  ];
+
   return (
     <section>
       <div className="stat-grid">
@@ -185,6 +193,11 @@ export default function Images({ notify }: { notify: Notify }) {
           校对索引
         </button>
       </div>
+      <p className="muted mt-1">
+        「下载一批」只排队 <span className="mono">待下载</span> 的图片：已下载、重复、以及失败超过
+        <span className="mono">FEICMS_IMAGE_MAX_ATTEMPTS</span> 次的都不会再请求；磁盘上已有文件但索引状态不对的行会被自动修正，
+        不会重新下载。失败项不会自动重试，要重试点「重试失败的」。
+      </p>
 
       <div className="card bg-base-100 border border-base-300 mt-3">
         <div className="card-body">
@@ -212,13 +225,20 @@ export default function Images({ notify }: { notify: Notify }) {
                 )}
               </div>
               {progress.errors.length ? (
-                <ul className="muted mt-2">
-                  {progress.errors.slice(0, 10).map((err, i) => (
-                    <li key={i}>
-                      <span className="mono">{err.host}</span> — {err.error}
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-2">
+                  <button className="btn btn-sm btn-ghost" onClick={() => setShowErrors((v) => !v)}>
+                    {showErrors ? "隐藏失败原因" : `失败原因 (${progress.errors.length})`}
+                  </button>
+                  {showErrors && (
+                    <ul className="muted mt-1">
+                      {progress.errors.slice(0, 10).map((err, i) => (
+                        <li key={i}>
+                          <span className="mono">{err.host}</span> — {err.error}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               ) : null}
             </>
           ) : (
@@ -228,6 +248,27 @@ export default function Images({ notify }: { notify: Notify }) {
       </div>
 
       <div className="flex flex-wrap gap-2 mt-3">
+        {chips.map(([key, label, count]) => (
+          <button
+            key={key}
+            className={`btn btn-sm ${status === key ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => {
+              setStatus(key);
+              setOffset(0);
+            }}
+          >
+            {label} {count}
+          </button>
+        ))}
+        <button
+          className={`btn btn-sm ${status === "" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => {
+            setStatus("");
+            setOffset(0);
+          }}
+        >
+          全部
+        </button>
         <input
           className="input input-bordered"
           placeholder="按图片域名过滤"
@@ -291,7 +332,7 @@ export default function Images({ notify }: { notify: Notify }) {
             {!images.length && (
               <tr>
                 <td colSpan={7} className="muted">
-                  没有图片记录，先运行「扫描图片 URL」。
+                  没有匹配的图片（当前筛选：{status || "全部状态"}）。先点「扫描图片 URL」登记海报链接。
                 </td>
               </tr>
             )}
