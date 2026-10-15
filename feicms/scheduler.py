@@ -20,6 +20,7 @@ log = logging.getLogger("feicms.scheduler")
 # what is running without restarting the service.
 scheduler_state: dict[str, object] = {
     "auto_collect": settings.auto_collect,
+    "auto_collect_full": settings.auto_collect_full,
     "auto_images": settings.image_auto,
     "collect_interval_minutes": settings.collect_interval_minutes,
     "health_interval_minutes": settings.health_interval_minutes,
@@ -42,6 +43,7 @@ def scheduler_status() -> dict[str, object]:
 
 def set_scheduler(
     auto_collect: bool | None = None,
+    auto_collect_full: bool | None = None,
     auto_images: bool | None = None,
     collect_interval_minutes: int | None = None,
     health_interval_minutes: int | None = None,
@@ -51,6 +53,9 @@ def set_scheduler(
     if auto_collect is not None:
         scheduler_state["auto_collect"] = bool(auto_collect)
         settings.auto_collect = bool(auto_collect)
+    if auto_collect_full is not None:
+        scheduler_state["auto_collect_full"] = bool(auto_collect_full)
+        settings.auto_collect_full = bool(auto_collect_full)
     if auto_images is not None:
         scheduler_state["auto_images"] = bool(auto_images)
         settings.image_auto = bool(auto_images)
@@ -74,7 +79,10 @@ async def auto_collect_loop() -> None:
     while True:
         if scheduler_state["auto_collect"]:
             try:
-                await start_collect_all(only_enabled=True)
+                # A full sweep walks every page each source reports; the default
+                # is the incremental FEICMS_PAGES pages per source.
+                pages = 0 if scheduler_state.get("auto_collect_full") else None
+                await start_collect_all(only_enabled=True, pages=pages)
                 while collect_progress()["running"]:
                     await asyncio.sleep(5)
                 state = collect_progress()

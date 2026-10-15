@@ -151,11 +151,14 @@ GET  /api/sources/export?fmt=yaml|json|csv
 ./server.sh full                              # 所有启用的站点，后台运行
 ./server.sh full --name "360资源站"           # 只扫一个站点
 ./server.sh full --delay 0.5 --concurrency 8  # 更慢 / 更保守
-./server.sh full-status                       # 进度 + 最近日志
+./server.sh full --wait                       # 排队：等当前那一轮结束再开始
+./server.sh full-status                       # 实时进度（读 data/collect_status.json）
 ./server.sh full-stop                         # 停止
 ```
 
-`full` 用 `nohup` 启动，SSH 断开也继续跑。日志写到 `data/collect.log`（启动一行、每个站点开始一行、每 20 页一行进度、每个站点完成一行结果），同时把实时进度快照写到 `data/collect_status.json`，`./server.sh full-status` 直接读它，不用 tail 日志。CLI 和服务的自动采集共用一个锁文件 `data/collect.lock`，所以全量扫描期间服务自己的定时采集会自动跳过，不会两轮并发写同一个库。
+`full` 用 `nohup` 启动，SSH 断开也继续跑。日志写到 `data/collect.log`（启动一行、每个站点开始一行、每 20 页一行进度、每个站点完成一行结果），同时把实时进度快照写到 `data/collect_status.json`，`./server.sh full-status` 直接读它，不用 tail 日志。服务自己的定时采集（面板的「采集全部」/自动采集）也写同一个快照，所以不管哪一侧在跑，`full-status` 都能看到进度。CLI 和服务的自动采集共用一个锁文件 `data/collect.lock`，所以全量扫描期间服务自己的定时采集会自动跳过，不会两轮并发写同一个库。
+
+想让服务自己慢慢扫（不需要 `./server.sh full`），在 `.env` 里设 `FEICMS_AUTO_COLLECT_FULL=true`，或在面板「配置 → 自动任务」里打开「自动全量采集」：每轮定时采集都会走每个站点的全部页数。
 
 如果 `full-status` 里页数一直是 0，说明该网络到这些站点不通，先跑 `./server.sh health` 看哪些站点可达。
 
@@ -349,6 +352,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_LOCK_FILE` | `data/collect.lock` | 采集锁文件（CLI 全量扫描与服务自动采集互斥） |
 | `FEICMS_LOCK_TTL` | 12 | 锁过期时间（小时），进程崩溃后自动释放 |
 | `FEICMS_AUTO_COLLECT` | true | 后台定时采集 |
+| `FEICMS_AUTO_COLLECT_FULL` | false | 定时采集走每个站点的全部页数（把 `./server.sh full` 挂在服务里） |
 | `FEICMS_COLLECT_INTERVAL` | 60 | 采集间隔（分钟） |
 | `FEICMS_HEALTH_INTERVAL` | 30 | 健康检查间隔（分钟） |
 | `FEICMS_HEALTH_THRESHOLD` | 3 | 连续失败几次后自动禁用 |
@@ -381,7 +385,8 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh init               # init-db + seed
 ./server.sh collect --pages 3
 ./server.sh full               # 后台全量扫描（每站真实页数），日志 data/collect.log
-./server.sh full-status        # 扫描进度 + 最近日志
+./server.sh full --wait       # 等当前那一轮结束再开始
+./server.sh full-status        # 实时进度（读 data/collect_status.json）
 ./server.sh full-stop          # 停止后台扫描
 ./server.sh health
 ./server.sh images scan|download|stats|repair|prune

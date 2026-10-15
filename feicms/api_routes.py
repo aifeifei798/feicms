@@ -740,6 +740,7 @@ async def config() -> dict[str, Any]:
         "page_limit": settings.page_limit,
         "full_page_cap": settings.full_page_cap,
         "auto_collect": settings.auto_collect,
+        "auto_collect_full": settings.auto_collect_full,
         "collect_interval_minutes": settings.collect_interval_minutes,
         "health_interval_minutes": settings.health_interval_minutes,
         "subscribe_interval_minutes": settings.subscribe_interval_minutes,

@@ -69,11 +69,13 @@ export default function Settings({ notify }: { notify: Notify }) {
     }
   };
 
-  const toggleScheduler = async (key: "auto_collect" | "auto_images") => {
+  const toggleScheduler = async (key: "auto_collect" | "auto_collect_full" | "auto_images") => {
     try {
       const s = await api.setScheduler({ [key]: !scheduler?.[key] });
       setScheduler(s);
-      notify(`${key === "auto_collect" ? "自动采集" : "自动海报下载"} ${s[key] ? "已开启" : "已关闭"}`);
+      const label =
+        key === "auto_collect" ? "自动采集" : key === "auto_collect_full" ? "自动全量采集" : "自动海报下载";
+      notify(`${label} ${s[key] ? "已开启" : "已关闭"}`);
     } catch (e) {
       notify((e as Error).message, "error");
     }
@@ -196,6 +198,7 @@ export default function Settings({ notify }: { notify: Notify }) {
                     <tr><td>FEICMS_DELAY</td><td>{config.request_delay}</td></tr>
                     <tr><td>FEICMS_RETRIES</td><td>{config.max_retries}</td></tr>
                     <tr><td>FEICMS_AUTO_COLLECT</td><td>{config.auto_collect ? "true" : "false"}</td></tr>
+                    <tr><td>FEICMS_AUTO_COLLECT_FULL</td><td>{config.auto_collect_full ? "true（每轮走全部页数）" : "false"}</td></tr>
                     <tr><td>FEICMS_COLLECT_INTERVAL</td><td>{config.collect_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_HEALTH_INTERVAL</td><td>{config.health_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_HEALTH_THRESHOLD</td><td>{config.health_fail_threshold}</td></tr>
@@ -286,6 +289,8 @@ export default function Settings({ notify }: { notify: Notify }) {
             <h2 className="card-title">自动任务</h2>
             <p className="muted">
               后台循环（自动采集、健康检查、海报下载）可以在这里开关，改间隔不需要重启服务。
+              「自动全量采集」开启后每轮都会走每个站点的全部页数（等同于 `./server.sh full`），
+              与后台扫描进程共用采集锁，不会同时跑两轮。
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
@@ -294,6 +299,13 @@ export default function Settings({ notify }: { notify: Notify }) {
                 disabled={busy}
               >
                 自动采集 {scheduler?.auto_collect ? "已开启" : "已关闭"}
+              </button>
+              <button
+                className={`btn btn-sm ${scheduler?.auto_collect_full ? "btn-primary" : "btn-outline"}`}
+                onClick={() => toggleScheduler("auto_collect_full")}
+                disabled={busy}
+              >
+                自动全量采集 {scheduler?.auto_collect_full ? "已开启" : "已关闭"}
               </button>
               <button
                 className={`btn btn-sm ${scheduler?.auto_images ? "btn-primary" : "btn-outline"}`}

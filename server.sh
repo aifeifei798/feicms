@@ -13,8 +13,8 @@
 #   ./server.sh build          构建前端 (pnpm/npm)
 #   ./server.sh init           init-db + seed
 #   ./server.sh collect [--full] [--pages N]
-#   ./server.sh full           后台全量扫描（每站真实页数），日志 data/collect.log
-#   ./server.sh full-status    全量扫描进度 + 最近日志
+#   ./server.sh full [--wait]  后台全量扫描（每站真实页数）；--wait 排队等当前轮结束
+#   ./server.sh full-status    实时进度（读 data/collect_status.json）
 #   ./server.sh full-stop      停止后台全量扫描
 #   ./server.sh health         探测所有站点
 #   ./server.sh images scan|download|stats|repair|prune
@@ -287,21 +287,34 @@ py_cmd() {
 
 cmd_full() {
   load_env
-  if [ -f "$COLLECT_LOCK" ]; then
-    echo "全量扫描已在进行中：$(cat "$COLLECT_LOCK")"
-    echo "看进度: ./server.sh full-status   或 tail -f $COLLECT_LOG"
+  local wait=0 args="" a
+  for a in "$@"; do
+    if [ "$a" = "--wait" ]; then
+      wait=1
+      continue
+    fi
+    args="$args $(printf '%q' "$a")"
+  done
+
+  if [ "$wait" = 1 ]; then
+    while [ -f "$COLLECT_LOCK" ]; do
+      echo "等待当前采集轮结束：$(cat "$COLLECT_LOCK")"
+      sleep 30
+    done
+  elif [ -f "$COLLECT_LOCK" ]; then
+    echo "另一轮采集正在进行中：$(cat "$COLLECT_LOCK")"
+    echo "看进度: ./server.sh full-status"
+    echo "想让后台扫描独占采集：.env 里设 FEICMS_AUTO_COLLECT=false 后 ./server.sh restart"
+    echo "或者用 ./server.sh full --wait，它会自动排队"
     return 0
   fi
+
   local cmd
   cmd="$(py_cmd)"
   if [ -z "$cmd" ]; then
     echo "未找到 uv，也没有 .venv。先运行 ./install.sh"
     exit 1
   fi
-  local args="" a
-  for a in "$@"; do
-    args="$args $(printf '%q' "$a")"
-  done
   # a new sweep starts a fresh log; the live numbers live in $COLLECT_STATUS
   : > "$COLLECT_LOG"
   if command -v setsid >/dev/null 2>&1; then
@@ -342,6 +355,7 @@ except Exception as exc:
     print(f"状态文件读取失败: {exc}")
     raise SystemExit(0)
 
+print(f"本轮状态: {'进行中' if d.get('running') else '已结束'}")
 print(f"本轮开始: {d.get('started_at', '?')}  最近更新: {d.get('updated_at', '?')}")
 print(f"进度: {d.get('done_sources', 0)}/{d.get('total_sources', 0)} 个站点完成，"
       f"共 {d.get('pages', 0)} 页，新增 {d.get('inserted', 0)}，更新 {d.get('updated', 0)}，"
@@ -363,6 +377,7 @@ PY
 }
 
 cmd_full_stop() {
+  local stopped=0
   if [ -f "$COLLECT_PID" ]; then
     pid="$(cat "$COLLECT_PID")"
     if kill -0 "$pid" 2>/dev/null; then
@@ -372,14 +387,29 @@ cmd_full_stop() {
         kill -TERM "$pid" 2>/dev/null
       fi
       echo "已停止 (pid $pid)"
+      stopped=1
     else
       echo "扫描进程已退出"
     fi
     rm -f "$COLLECT_PID"
   fi
-  pkill -f "feicms collect --full" 2>/dev/null || true
-  rm -f "$COLLECT_LOCK"
-  echo "锁已释放"
+  if pkill -f "feicms collect --full" 2>/dev/null; then
+    stopped=1
+  fi
+  if [ -f "$COLLECT_LOCK" ]; then
+    holder="$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("pid", ""))
+except Exception:
+    print("")' "$COLLECT_LOCK" 2>/dev/null)"
+    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null && [ "$stopped" = 0 ]; then
+      echo "没有后台扫描进程可停：锁由服务自己的自动采集持有 (pid $holder)"
+      echo "想让后台扫描独占：.env 设 FEICMS_AUTO_COLLECT=false 后 ./server.sh restart"
+      return 0
+    fi
+    rm -f "$COLLECT_LOCK"
+    echo "锁已释放"
+  fi
 }
 
 usage() {

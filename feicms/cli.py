@@ -213,12 +213,14 @@ def collect(
         effective_pages = 0 if full else pages
 
         started_at = datetime.now(timezone.utc)
+        running = True
         live: dict[int, dict[str, Any]] = {}
         finished: list[dict[str, Any]] = []
         status_path = Path(settings.status_file)
 
         def write_status() -> None:
             payload = {
+                "running": running,
                 "started_at": started_at.isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "total_sources": len(live),
@@ -302,6 +304,8 @@ def collect(
             on_result=on_result,
             on_progress=on_progress,
         )
+        running = False
+        write_status()
         if not results:
             console.print("[yellow]另一轮采集正在进行中，本轮未启动。[/yellow]")
             return

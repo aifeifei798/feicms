@@ -86,6 +86,10 @@ class Settings:
     image_auto: bool = _env_bool("FEICMS_IMAGE_AUTO", True)
     image_interval_minutes: int = _env_int("FEICMS_IMAGE_INTERVAL", 30)
     auto_collect: bool = _env_bool("FEICMS_AUTO_COLLECT", True)
+    # When true the periodic auto-collect walks every page each source reports
+    # instead of only FEICMS_PAGES. Useful on a server that is meant to keep
+    # sweeping in the background without anyone opening the panel.
+    auto_collect_full: bool = _env_bool("FEICMS_AUTO_COLLECT_FULL", False)
     collect_interval_minutes: int = _env_int("FEICMS_COLLECT_INTERVAL", 60)
     health_interval_minutes: int = _env_int("FEICMS_HEALTH_INTERVAL", 30)
     health_fail_threshold: int = _env_int("FEICMS_HEALTH_THRESHOLD", 3)

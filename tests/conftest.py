@@ -11,6 +11,7 @@ _TMP = tempfile.mkdtemp(prefix="feicms-test-")
 os.environ.setdefault("FEICMS_DB", f"sqlite+aiosqlite:///{_TMP}/test.db")
 os.environ.setdefault("FEICMS_IMAGE_DIR", f"{_TMP}/images")
 os.environ.setdefault("FEICMS_LOCK_FILE", f"{_TMP}/collect.lock")
+os.environ.setdefault("FEICMS_STATUS_FILE", f"{_TMP}/collect_status.json")
 os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
 os.environ.setdefault("FEICMS_IMAGE_AUTO", "false")
 # Authentication is off unless a test explicitly turns it on.

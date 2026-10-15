@@ -252,6 +252,7 @@ export interface SourceImportResult {
 
 export interface SchedulerState {
   auto_collect: boolean;
+  auto_collect_full: boolean;
   auto_images: boolean;
   collect_interval_minutes: number;
   health_interval_minutes: number;
@@ -397,6 +398,7 @@ export interface Config {
   image_auto: boolean;
   image_interval_minutes: number;
   auto_collect: boolean;
+  auto_collect_full: boolean;
   collect_interval_minutes: number;
   health_interval_minutes: number;
   subscribe_interval_minutes: number;
@@ -469,6 +471,7 @@ export const api = {
   scheduler: () => request<SchedulerState>("/api/scheduler"),
   setScheduler: (body: {
     auto_collect?: boolean;
+    auto_collect_full?: boolean;
     auto_images?: boolean;
     collect_interval_minutes?: number;
     health_interval_minutes?: number;

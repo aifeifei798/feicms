@@ -515,6 +515,42 @@ def collect_progress() -> dict[str, Any]:
     return dict(_collect_state)
 
 
+def write_status_snapshot() -> None:
+    """Mirror the sweep state to `settings.status_file`.
+
+    `./server.sh full-status` reads that file, so both the CLI sweep and a sweep
+    started by the service (auto-collect or the 采集 panel) show up there.
+    """
+    current = [e for e in _source_progress.values() if e.get("current")]
+    payload = {
+        "running": bool(_collect_state.get("running")),
+        "started_at": _collect_state.get("started_at"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "total_sources": _collect_state.get("total_sources", 0),
+        "done_sources": _collect_state.get("done_sources", 0),
+        "pages": sum(e.get("pages", 0) for e in current),
+        "inserted": _collect_state.get("inserted", 0),
+        "updated": _collect_state.get("updated", 0),
+        "skipped": _collect_state.get("skipped", 0),
+        "sources": sorted(current, key=lambda e: e.get("pages", 0), reverse=True),
+        "finished": [
+            {
+                "name": e.get("name"),
+                "status": e.get("status"),
+                "note": e.get("stopped_reason") or "",
+            }
+            for e in current
+            if e.get("status") in ("done", "failed")
+        ],
+    }
+    try:
+        path = Path(settings.status_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False))
+    except OSError:
+        log.warning("could not write status file %s", settings.status_file)
+
+
 def _progress_entry(src: Source) -> dict[str, Any]:
     return {
         "source_id": src.id,
@@ -591,12 +627,19 @@ async def start_collect_all(
             )
 
     by_id = {src.id: _source_progress[src.id] for src in selected}
+    progress_events = 0
 
     def on_progress(source_id: int, snap: dict[str, Any]) -> None:
+        nonlocal progress_events
         entry = by_id.get(source_id)
         if entry is not None:
             entry.update(snap)
             entry["status"] = "running"
+        # A full sweep is hundreds of thousands of pages: only write the file
+        # every few events so the disk is not hammered.
+        progress_events += 1
+        if progress_events % 10 == 0:
+            write_status_snapshot()
 
     def on_result(result: CollectResult) -> None:
         _collect_state["done_sources"] += 1
@@ -620,6 +663,7 @@ async def start_collect_all(
                     "stopped_reason": result.stopped_reason,
                 }
             )
+        write_status_snapshot()
 
     async def runner() -> None:
         try:
@@ -637,6 +681,7 @@ async def start_collect_all(
         finally:
             _collect_state["running"] = False
             _collect_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+            write_status_snapshot()
 
     _collect_state.update(
         running=True,
@@ -651,6 +696,7 @@ async def start_collect_all(
         error=None,
         sources=list(_source_progress.values()),
     )
+    write_status_snapshot()
     asyncio.create_task(runner())
     return dict(_collect_state)
 

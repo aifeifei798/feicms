@@ -279,6 +279,16 @@ def test_background_sweep_reports_progress():
         assert entry["target"] == 5
         assert entry["inserted"] == 30
 
+        # The same snapshot is mirrored to the status file `./server.sh full-status` reads.
+        from pathlib import Path
+
+        from feicms.config import settings
+
+        payload = json.loads(Path(settings.status_file).read_text())
+        assert payload["done_sources"] == 1
+        assert payload["pages"] == 3
+        assert payload["sources"][0]["name"] == "后台测试站"
+
         # Sources outside this sweep are still listed, flagged as not current.
         others = [e for e in state["sources"] if e["source_id"] != src.id]
         assert all(e["current"] is False for e in others)

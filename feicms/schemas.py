@@ -130,6 +130,7 @@ class SourceImportRequest(BaseModel):
 
 class SchedulerUpdate(BaseModel):
     auto_collect: Optional[bool] = None
+    auto_collect_full: Optional[bool] = None
     auto_images: Optional[bool] = None
     collect_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
     health_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
