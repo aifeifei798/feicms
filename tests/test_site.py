@@ -163,13 +163,13 @@ def test_adult_filter_hides_records_by_default():
     assert any(t["type_name"] == "日本无码" for t in filters["types"])
 
 
-def test_adult_filter_endpoint_changes_the_default():
+def test_adult_filter_endpoint_changes_the_default(tmp_path):
     from pathlib import Path
 
     from feicms.adult import DEFAULT_ADULT_NAME_KEYWORDS, DEFAULT_ADULT_TYPE_KEYWORDS
     from feicms.config import settings
 
-    env_path = Path("/tmp/opencode/feicms_adult_test.env")
+    env_path = Path(tmp_path / "feicms_adult_test.env")
     os.environ["FEICMS_ENV_FILE"] = str(env_path)
     previous = (settings.hide_adult, settings.adult_type_keywords, settings.adult_name_keywords)
     try:

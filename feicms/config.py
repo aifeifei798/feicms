@@ -142,6 +142,7 @@ def env_file_path() -> Path:
 def update_env_file(values: dict[str, str], path: Path | None = None) -> Path:
     """Write (or replace) KEY=VALUE lines in .env, leaving everything else alone."""
     p = path or env_file_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
     lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
     wanted = dict(values)
     out: list[str] = []
