@@ -75,6 +75,9 @@ async def check_source(
                     src.health_status = "slow" if result.latency_ms > 5000 else "ok"
                     src.fail_streak = 0
                     src.last_error = None
+                    # 只要现在能跑就自动启用（手动点 health 重新启用 / 定时巡검 看到恢复的源也自动-enable），
+                    # manual disabled 的源回到可用，恢复 tomorrow 也能 come back。
+                    src.enabled = True
                 else:
                     src.last_error = result.message
                     if disable_on_fail:

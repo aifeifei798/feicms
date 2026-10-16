@@ -130,7 +130,7 @@ async def auto_health_loop() -> None:
     while True:
         if scheduler_state["auto_collect"]:
             try:
-                await health_check_all(only_enabled=True)
+                await health_check_all(only_enabled=False, reenable=False, disable_on_fail=False, health_timeout=8.0, retries=1)
                 async with session() as s:
                     await s.execute(
                         update(Source).where(Source.fail_streak >= settings.health_fail_threshold * 2).values(enabled=False)
