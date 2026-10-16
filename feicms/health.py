@@ -40,7 +40,11 @@ def health_rank() -> Any:
     )
 
 
-async def check_source(source: Source, client: Fetcher | None = None) -> HealthResult:
+async def check_source(
+    source: Source,
+    client: Fetcher | None = None,
+    disable_on_fail: bool = False,
+) -> HealthResult:
     own = client is None
     client = client or Fetcher()
     url = build_query(source.url, "list", 1, 1)
@@ -71,30 +75,52 @@ async def check_source(source: Source, client: Fetcher | None = None) -> HealthR
                     src.fail_streak = 0
                     src.last_error = None
                 else:
-                    src.fail_streak = (src.fail_streak or 0) + 1
                     src.last_error = result.message
-                    src.health_status = "dead" if src.fail_streak >= settings.health_fail_threshold else "slow"
+                    if disable_on_fail:
+                        src.health_status = "dead"
+                        src.fail_streak = max(src.fail_streak or 0, settings.health_fail_threshold)
+                        src.enabled = False
+                    else:
+                        src.fail_streak = (src.fail_streak or 0) + 1
+                        is_dead = src.fail_streak >= settings.health_fail_threshold
+                        src.health_status = "dead" if is_dead else "slow"
     return result
 
 
-async def health_check_all(only_enabled: bool = True, reenable: bool = False) -> list[HealthResult]:
+async def health_check_all(
+    only_enabled: bool = True,
+    reenable: bool = False,
+    disable_on_fail: bool = False,
+    timeout: float = 8.0,
+    retries: int = 1,
+) -> list[HealthResult]:
     import asyncio
 
     # 用户点的「健康检查」：先把所有源重新启用，再探活，避免上次被自动禁用的源永远不能 comeback。
     if reenable:
         only_enabled = False
+        async with write_lock():
+            async with session() as s:
+                await s.execute(update(Source).values(enabled=True, fail_streak=0))
+                await s.commit()
+
+    if only_enabled:
         async with session() as s:
-            await s.execute(update(Source).values(enabled=True, fail_streak=0))
-            await s.commit()
+            stmt = select(Source).where(Source.enabled)
+            sources = list(await s.scalars(stmt))
+    else:
+        async with session() as s:
+            sources = list(await s.scalars(select(Source)))
 
-    async with session() as s:
-        stmt = select(Source)
-        if only_enabled:
-            stmt = stmt.where(Source.enabled)
-        sources = list(await s.scalars(stmt))
-
-    client = Fetcher()
+    # 速度：探活只做 1 次请求（原重试 3× profile 使单个死域名拖数十秒），
+    # timeout 缩到 8s，gather 并行跑；总时间 ≈ 最慢的单站，而非 sum。
+    original_retries = settings.max_retries
+    settings.max_retries = retries
+    client = Fetcher(timeout=timeout)
     try:
-        return await asyncio.gather(*(check_source(src, client) for src in sources))
+        return await asyncio.gather(
+            *(check_source(src, client, disable_on_fail=disable_on_fail) for src in sources)
+        )
     finally:
+        settings.max_retries = original_retries
         await client.aclose()
