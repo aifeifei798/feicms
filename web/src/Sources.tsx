@@ -30,7 +30,6 @@ export default function Sources({ notify }: { notify: Notify }) {
   const [sources, setSources] = React.useState<Source[]>([]);
   const [q, setQ] = React.useState("");
   const [health, setHealth] = React.useState("");
-  const [onlyEnabled, setOnlyEnabled] = React.useState(false);
   const [editing, setEditing] = React.useState<Source | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
@@ -40,9 +39,8 @@ export default function Sources({ notify }: { notify: Notify }) {
     const params: Record<string, string | boolean> = {};
     if (q) params.q = q;
     if (health) params.health = health;
-    if (onlyEnabled) params.enabled = true;
     setSources(await api.sources(params));
-  }, [q, health, onlyEnabled]);
+  }, [q, health]);
 
   React.useEffect(() => {
     load().catch((e) => notify((e as Error).message, "error"));
@@ -60,9 +58,8 @@ export default function Sources({ notify }: { notify: Notify }) {
       const r = await api.healthCheck();
       setReport(r);
       const slowest = r.results.reduce((a, b) => Math.max(a, b.latency_ms), 0);
-      // 健康检查会把挂掉的源禁用并标 dead：禁用它们不会"消失"在列表顶部，
-      // 所以这里把"仅启用"过滤取消，方便用户看到刚才被禁用的 17 个
-      setOnlyEnabled(false);
+      // 健康检查会把挂掉的源禁用并标 dead，列表已把它们排前，
+      // 且已移除"仅启用"过滤，所以无论健康状态都能看到。
       notify(
         `健康检查：${r.ok} 正常 / ${r.dead} 不可用（共 ${r.checked} 个站点，最慢 ${slowest} ms）`,
         r.dead ? "error" : "success"
@@ -107,11 +104,7 @@ export default function Sources({ notify }: { notify: Notify }) {
             );
           })}
         </div>
-        <label className="label mr-2">
-          <input type="checkbox" checked={onlyEnabled} onChange={(e) => setOnlyEnabled(e.target.checked)} />
-          <span className="ml-1">仅启用</span>
-        </label>
-        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>新增站点</button>
+        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>新增站点</button>>
         <button className="btn btn-sm btn-outline" onClick={runHealthCheck} disabled={checking}>
           {checking ? "检查中…" : "健康检查"}
         </button>
