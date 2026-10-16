@@ -204,6 +204,11 @@ def collect(
     ),
     delay: float = typer.Option(None, "--delay", help="override FEICMS_DELAY: seconds between page requests"),
     heartbeat: int = typer.Option(20, "--heartbeat", help="print a progress line every N pages (0 = off)"),
+    health_first: bool = typer.Option(
+        True,
+        "--health-first/--no-health-first",
+        help="全量扫描前先做一次健康检查：恢复能连的源、禁用挂掉的源，再扫剩下的",
+    ),
     resume: bool = typer.Option(
         None,
         "--resume/--no-resume",
@@ -231,6 +236,19 @@ def collect(
             console.print(
                 "[yellow]上一次扫描留下了锁文件，但那个进程已经不在了，本轮会直接接管。[/yellow]"
             )
+
+        # 全量扫描前先 probe 一次（恢复能用的源、禁用挂掉的源），避免盲扫死源。
+        run_health_before = bool(health_first and (full or pages in (None, 0)))
+        if run_health_before:
+            console.print("[cyan]健康检查：先把所有源重新启用（探活），挂掉的禁用…[/cyan]")
+            try:
+                hr = await health_check_all(reenable=True, disable_on_fail=True, timeout=8.0, retries=1)
+                ok_cnt = sum(1 for r in hr if r.ok)
+                console.print(
+                    f"[green]健康检查完成[/green] {ok_cnt}/{len(hr)} 可用，剩下的禁用掉再跑"
+                )
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]健康检查失败（{exc}），继续采集[/yellow]")
 
         started_at = datetime.now(timezone.utc)
         running = True
@@ -403,7 +421,7 @@ def health() -> None:
     """Probe every enabled source and record latency/availability."""
 
     async def _run() -> None:
-        results = await health_check_all(reenable=True)
+        results = await health_check_all(reenable=True, disable_on_fail=True)
         table = Table(title="source health")
         table.add_column("name")
         table.add_column("ok")

@@ -13,7 +13,8 @@
 #   ./server.sh build          构建前端 (pnpm/npm)
 #   ./server.sh init           init-db + seed
 #   ./server.sh collect [--full] [--pages N]
-#   ./server.sh full [--wait] [--fresh]  后台全量扫描（每站真实页数，默认断点续传）
+#   ./server.sh full [--wait] [--fresh]  后台全量扫描（每站真实页数，默认断点续传, 先做健康检查）
+#   ./server.sh full --no-health       跳过先置的健康检查（更快，可能盲扫到坏源）
 #   ./server.sh full-status    实时进度 + 断点（读 data/collect_status.json）
 #   ./server.sh full-stop      停止后台全量扫描（断点保留）
 #   ./server.sh resume [--clear] [--detail]  查看 / 清除断点续传记录
@@ -296,6 +297,7 @@ cmd_full() {
       --wait) wait=1; continue ;;
       --fresh|--restart) fresh=1; continue ;;
       --resume) continue ;;   # 默认就是续传，兼容显式写出来的用法
+      --no-health|--no-health-first) args="$args $(printf '%q' "--no-health-first")"; continue ;;
     esac
     args="$args $(printf '%q' "$a")"
   done
