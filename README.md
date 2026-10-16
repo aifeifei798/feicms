@@ -151,15 +151,28 @@ GET  /api/sources/export?fmt=yaml|json|csv
 不想开网页时，直接丢在服务器上跑：
 
 ```bash
-./server.sh full                              # 所有启用的站点，后台运行
+./server.sh full                              # 所有启用的站点，后台运行（断点续传）
 ./server.sh full --name "360资源站"           # 只扫一个站点
 ./server.sh full --delay 0.5 --concurrency 8  # 更慢 / 更保守
 ./server.sh full --wait                       # 排队：等当前那一轮结束再开始
-./server.sh full-status                       # 实时进度（读 data/collect_status.json）
-./server.sh full-stop                         # 停止
+./server.sh full --fresh                      # 忽略断点，从第 1 页重新开始
+./server.sh full-status                       # 实时进度 + 断点（读 data/collect_status.json）
+./server.sh full-stop                         # 停止（断点保留）
+./server.sh resume                            # 查看断点记录
+./server.sh resume --detail                   # 每个站点记录到第几页
+./server.sh resume --clear                    # 清除断点
 ```
 
 `full` 用 `nohup` 启动，SSH 断开也继续跑。日志写到 `data/collect.log`（启动一行、每个站点开始一行、每 20 页一行进度、每个站点完成一行结果），同时把实时进度快照写到 `data/collect_status.json`，`./server.sh full-status` 直接读它，不用 tail 日志。服务自己的定时采集（面板的「采集全部」/自动采集）也写同一个快照，所以不管哪一侧在跑，`full-status` 都能看到进度。CLI 和服务的自动采集共用一个锁文件 `data/collect.lock`，所以全量扫描期间服务自己的定时采集会自动跳过，不会两轮并发写同一个库。
+
+**断点续传**：全量扫描每跑完一页就把该站点的进度写进 `data/collect_resume.json`（`site → 已跑完到第几页`）。断电、重启、Ctrl-C、`./server.sh full-stop` 之后，再跑一次 `./server.sh full` 会**跳过已经跑完的站点、没跑完的站点从记录的那一页继续**，不会把几小时的成果扔掉：
+
+- 一轮全部站点都跑到结尾时，记录标记为「已完成」，下次 `full` 会正常地从头重新扫一遍（那是新一轮全量）。
+- 想强制从头开始：`./server.sh full --fresh`（或面板里取消勾选「断点续传」，或 `./server.sh resume --clear`）。
+- 集群/面板侧等效：`POST /api/collect/start {"pages": 0, "resume": false}`；查看/清除：`GET`/`DELETE /api/collect/resume`。
+- 锁文件也一起变聪明了：如果 `data/collect.lock` 里的进程已经不存在（崩溃/重启留下的），不再死等 `FEICMS_LOCK_TTL`，直接接管继续。设 `FEICMS_RESUME=false` 可整体关掉断点续传。
+
+想让服务自己慢慢扫（不需要 `./server.sh full`），在 `.env` 里设 `FEICMS_AUTO_COLLECT_FULL=true`，或在面板「配置 → 自动任务」里打开「自动全量采集」：每轮定时采集都会走每个站点的全部页数。
 
 想让服务自己慢慢扫（不需要 `./server.sh full`），在 `.env` 里设 `FEICMS_AUTO_COLLECT_FULL=true`，或在面板「配置 → 自动任务」里打开「自动全量采集」：每轮定时采集都会走每个站点的全部页数。
 
@@ -383,7 +396,9 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_DELAY` | 0.3 | 请求间隔（秒） |
 | `FEICMS_RETRIES` | 3 | 重试次数 |
 | `FEICMS_LOCK_FILE` | `data/collect.lock` | 采集锁文件（CLI 全量扫描与服务自动采集互斥） |
-| `FEICMS_LOCK_TTL` | 12 | 锁过期时间（小时），进程崩溃后自动释放 |
+| `FEICMS_LOCK_TTL` | 12 | 锁过期时间（小时）；持有进程已消失时立即视为过期 |
+| `FEICMS_RESUME` | true | 全量扫描断点续传（记录在 `FEICMS_RESUME_FILE`，中断后再跑继续） |
+| `FEICMS_RESUME_FILE` | `data/collect_resume.json` | 断点记录文件 |
 | `FEICMS_AUTO_COLLECT` | true | 后台定时采集 |
 | `FEICMS_AUTO_COLLECT_FULL` | false | 定时采集走每个站点的全部页数（把 `./server.sh full` 挂在服务里） |
 | `FEICMS_COLLECT_INTERVAL` | 60 | 采集间隔（分钟） |
@@ -421,10 +436,12 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh build              # 构建前端
 ./server.sh init               # init-db + seed
 ./server.sh collect --pages 3
-./server.sh full               # 后台全量扫描（每站真实页数），日志 data/collect.log
-./server.sh full --wait       # 等当前那一轮结束再开始
-./server.sh full-status        # 实时进度（读 data/collect_status.json）
-./server.sh full-stop          # 停止后台扫描
+./server.sh full               # 后台全量扫描（每站真实页数，断点续传），日志 data/collect.log
+./server.sh full --wait        # 等当前那一轮结束再开始
+./server.sh full --fresh       # 忽略断点，从第 1 页重新开始
+./server.sh full-status        # 实时进度 + 断点（读 data/collect_status.json）
+./server.sh full-stop          # 停止后台扫描（断点保留）
+./server.sh resume --detail    # 查看断点记录（--clear 清除）
 ./server.sh health
 ./server.sh images scan|download|stats|repair|prune
 ./server.sh passwd --user admin --password 你的密码    # 改 .env 里的账号

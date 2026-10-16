@@ -13,7 +13,14 @@ from rich.table import Table
 from sqlalchemy import func, select
 
 from .config import BASE_DIR, settings, update_env_file
-from .collector import collect_all, collect_source
+from .collector import (
+    clear_resume,
+    collect_all,
+    collect_lock_is_stale,
+    collect_source,
+    resume_file_path,
+    resume_summary,
+)
 from .db import init_db, session
 from .health import health_check_all, health_rank
 from .adult import adult_condition, adult_name_keywords, adult_type_keywords, matched_keyword
@@ -197,11 +204,17 @@ def collect(
     ),
     delay: float = typer.Option(None, "--delay", help="override FEICMS_DELAY: seconds between page requests"),
     heartbeat: int = typer.Option(20, "--heartbeat", help="print a progress line every N pages (0 = off)"),
+    resume: bool = typer.Option(
+        None,
+        "--resume/--no-resume",
+        help="全量扫描断点续传：跳过上次已跑完的站点、从记录的那一页继续（默认跟随 FEICMS_RESUME）",
+    ),
 ) -> None:
     """Run collection now (all enabled sources, or one by --name).
 
     `--full` walks every page each source reports. It is meant to be left running
-    on the server: `./server.sh full` starts it in the background.
+    on the server: `./server.sh full` starts it in the background. An interrupted
+    full sweep resumes from its checkpoint unless `--no-resume` is given.
     """
 
     async def _run() -> None:
@@ -212,12 +225,23 @@ def collect(
 
         names = [name] if name else None
         effective_pages = 0 if full else pages
+        effective_resume = settings.resume if resume is None else resume
+        lock_path = Path(settings.lock_file)
+        if lock_path.exists() and collect_lock_is_stale():
+            console.print(
+                "[yellow]上一次扫描留下了锁文件，但那个进程已经不在了，本轮会直接接管。[/yellow]"
+            )
 
         started_at = datetime.now(timezone.utc)
         running = True
         live: dict[int, dict[str, Any]] = {}
         finished: list[dict[str, Any]] = []
         status_path = Path(settings.status_file)
+        # 断点续传: captured before the sweep overwrites the checkpoint file, so
+        # `full-status` can still show what the interrupted run had reached.
+        resume_info: dict[str, Any] | None = (
+            resume_summary() if (effective_pages == 0 and effective_resume) else None
+        )
 
         def write_status() -> None:
             payload = {
@@ -232,6 +256,7 @@ def collect(
                 "skipped": sum(s.get("skipped", 0) for s in live.values()),
                 "sources": sorted(live.values(), key=lambda s: s.get("pages", 0), reverse=True),
                 "finished": finished,
+                "resume": resume_info,
             }
             try:
                 status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,6 +321,13 @@ def collect(
             f"[green]采集开始[/green] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
             f"{'全量（每站真实页数）' if effective_pages == 0 else f'{effective_pages or settings.default_pages} 页/站'}"
         )
+        if resume_info and resume_info.get("exists") and not resume_info.get("done"):
+            console.print(
+                f"[yellow]断点续传[/yellow] 上次记录 {resume_info['sources']} 个站点，"
+                f"其中 {resume_info['finished']} 个已跑完（将跳过），其余从记录页继续"
+            )
+        elif effective_pages == 0 and not effective_resume:
+            console.print("[dim]已禁用断点续传：本轮从第 1 页重新开始[/dim]")
         write_status()
 
         results = await collect_all(
@@ -304,11 +336,16 @@ def collect(
             only_enabled=not include_disabled,
             on_result=on_result,
             on_progress=on_progress,
+            resume=effective_resume,
         )
         running = False
+        resume_info = resume_summary() if effective_pages == 0 else None
         write_status()
         if not results:
-            console.print("[yellow]另一轮采集正在进行中，本轮未启动。[/yellow]")
+            if Path(settings.lock_file).exists():
+                console.print("[yellow]另一轮采集正在进行中，本轮未启动。[/yellow]")
+            else:
+                console.print("[yellow]没有选中任何可采集的站点（检查 --name / --include-disabled）[/yellow]")
             return
         done = sum(1 for r in results if not (r.error or r.stopped_reason))
         console.print(
@@ -316,8 +353,49 @@ def collect(
             f"新增 {sum(r.inserted for r in results)}，更新 {sum(r.updated for r in results)}，"
             f"跳过 {sum(r.skipped for r in results)} 条重复"
         )
+        if effective_pages == 0 and resume_info and not resume_info.get("done"):
+            console.print(
+                "[yellow]本轮没跑完[/yellow]（断点已保存，直接再跑一次会自动续传；"
+                "想从头开始加 --no-resume）"
+            )
 
     asyncio.run(_run())
+
+
+@app.command("resume")
+def resume_cmd(
+    clear: bool = typer.Option(False, "--clear", help="删除断点记录，下一次全量扫描从头开始"),
+    detail: bool = typer.Option(False, "--detail", help="列出每个站点记录到第几页"),
+) -> None:
+    """查看 / 清除全量扫描的断点续传记录。"""
+    if clear:
+        clear_resume()
+        console.print(f"[green]已清除断点[/green] {resume_file_path()}")
+        return
+    info = resume_summary()
+    if not info["exists"]:
+        console.print(f"[dim]没有断点记录（{resume_file_path()} 不存在）[/dim]")
+        return
+    state = "已完成（下次全量会从头开始）" if info["done"] else "未跑完（下次全量会续传）"
+    console.print(f"断点文件: {resume_file_path()}")
+    console.print(
+        f"状态: {state}  开始: {info['started_at'] or '?'}  更新: {info['updated_at'] or '?'}"
+    )
+    console.print(f"记录站点: {info['sources']} 个，其中已跑完 {info['finished']} 个")
+    if detail and info["pending"]:
+        table = Table("待续传站点", "从第几页继续", "已采集页", "总页数", "新增", "更新")
+        for entry in info["pending"]:
+            table.add_row(
+                str(entry.get("name") or entry.get("source_id")),
+                str(entry.get("next_page") or 1),
+                str(entry.get("pages") or 0),
+                str(entry.get("pagecount") or "?"),
+                str(entry.get("inserted") or 0),
+                str(entry.get("updated") or 0),
+            )
+        console.print(table)
+    elif detail:
+        console.print("[dim]没有待续传的站点[/dim]")
 
 
 @app.command("health")

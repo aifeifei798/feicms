@@ -222,14 +222,32 @@ const GROUPS: Group[] = [
             note: "省略 = 每站 max_pages；>0 = 指定页数；0 = 全量遍历所有页",
           },
           { name: "source_ids", type: "int[]", note: "只采集这些站点（UI 每行「采集」「全量」按钮）" },
+          {
+            name: "resume",
+            type: "bool",
+            note: "只对全量（pages=0）有效：默认跟随 FEICMS_RESUME，false = 忽略断点从第 1 页重扫",
+          },
         ],
-        example: "curl -X POST http://127.0.0.1:8000/api/collect/start -H 'Content-Type: application/json' -d '{\"source_ids\": [1, 2]}'",
+        example: "curl -X POST http://127.0.0.1:8000/api/collect/start -H 'Content-Type: application/json' -d '{\"pages\": 0, \"resume\": true}'",
       },
       {
         method: "GET",
         path: "/api/collect/progress",
         summary: "查看后台采集进度：running / total_sources / done_sources / inserted / updated / skipped / failed_sources，以及每个站点一条 `sources` 进度（status、pages、pagecount、target、inserted、updated、skipped、elapsed_ms、current）",
         example: "curl http://127.0.0.1:8000/api/collect/progress",
+      },
+      {
+        method: "GET",
+        path: "/api/collect/resume",
+        summary: "断点续传记录（data/collect_resume.json）：done、sources、finished，以及 detail（已跑完）与 pending（每个站点记录到 next_page，下次从这里继续）",
+        example: "curl http://127.0.0.1:8000/api/collect/resume",
+        tryable: true,
+      },
+      {
+        method: "DELETE",
+        path: "/api/collect/resume",
+        summary: "清除断点记录，下一次全量扫描从第 1 页开始（等同于 ./server.sh resume --clear）",
+        example: "curl -X DELETE http://127.0.0.1:8000/api/collect/resume",
       },
       {
         method: "POST",

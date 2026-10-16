@@ -13,9 +13,10 @@
 #   ./server.sh build          构建前端 (pnpm/npm)
 #   ./server.sh init           init-db + seed
 #   ./server.sh collect [--full] [--pages N]
-#   ./server.sh full [--wait]  后台全量扫描（每站真实页数）；--wait 排队等当前轮结束
-#   ./server.sh full-status    实时进度（读 data/collect_status.json）
-#   ./server.sh full-stop      停止后台全量扫描
+#   ./server.sh full [--wait] [--fresh]  后台全量扫描（每站真实页数，默认断点续传）
+#   ./server.sh full-status    实时进度 + 断点（读 data/collect_status.json）
+#   ./server.sh full-stop      停止后台全量扫描（断点保留）
+#   ./server.sh resume [--clear] [--detail]  查看 / 清除断点续传记录
 #   ./server.sh health         探测所有站点
 #   ./server.sh images scan|download|stats|repair|prune
 #   ./server.sh passwd [--user admin] [--password xxx]
@@ -32,6 +33,7 @@ COLLECT_LOG="$ROOT/data/collect.log"
 COLLECT_PID="$ROOT/data/collect.pid"
 COLLECT_LOCK="$ROOT/data/collect.lock"
 COLLECT_STATUS="$ROOT/data/collect_status.json"
+COLLECT_RESUME="$ROOT/data/collect_resume.json"
 
 load_env() {
   if [ -f "$ROOT/.env" ]; then
@@ -288,26 +290,51 @@ py_cmd() {
 
 cmd_full() {
   load_env
-  local wait=0 args="" a
+  local wait=0 fresh=0 args="" a
   for a in "$@"; do
-    if [ "$a" = "--wait" ]; then
-      wait=1
-      continue
-    fi
+    case "$a" in
+      --wait) wait=1; continue ;;
+      --fresh|--restart) fresh=1; continue ;;
+      --resume) continue ;;   # 默认就是续传，兼容显式写出来的用法
+    esac
     args="$args $(printf '%q' "$a")"
   done
 
+  if [ "$fresh" = 1 ]; then
+    args="$args --no-resume"
+  fi
+
   if [ "$wait" = 1 ]; then
-    while [ -f "$COLLECT_LOCK" ]; do
+    while lock_held_by_live; do
       echo "等待当前采集轮结束：$(cat "$COLLECT_LOCK")"
       sleep 30
     done
-  elif [ -f "$COLLECT_LOCK" ]; then
+  elif lock_held_by_live; then
     echo "另一轮采集正在进行中：$(cat "$COLLECT_LOCK")"
     echo "看进度: ./server.sh full-status"
     echo "想让后台扫描独占采集：.env 里设 FEICMS_AUTO_COLLECT=false 后 ./server.sh restart"
     echo "或者用 ./server.sh full --wait，它会自动排队"
     return 0
+  elif [ -f "$COLLECT_LOCK" ]; then
+    echo "发现上次扫描残留的锁（那个进程已经不在），本轮直接接管"
+  fi
+
+  if [ "$fresh" = 1 ]; then
+    echo "已指定 --fresh：忽略断点，从第 1 页重新开始"
+  elif [ -f "$COLLECT_RESUME" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$COLLECT_RESUME" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+sources = d.get("sources") or {}
+done = [e for e in sources.values() if isinstance(e, dict) and e.get("status") == "done"]
+if d.get("done"):
+    print("上次全量已跑完，本轮重新开始")
+elif sources:
+    print(f"断点续传：上次记录 {len(sources)} 个站点，其中 {len(done)} 个已跑完（跳过），其余从记录页继续")
+PY
   fi
 
   local cmd
@@ -326,7 +353,22 @@ cmd_full() {
   echo $! > "$COLLECT_PID"
   echo "全量扫描已启动 (pid $!)，日志: $COLLECT_LOG"
   echo "看进度: ./server.sh full-status   或 tail -f $COLLECT_LOG"
-  echo "停止:   ./server.sh full-stop"
+  echo "停止:   ./server.sh full-stop   （断点会保留，再跑 ./server.sh full 自动续传）"
+}
+
+# 采集锁是否还由一个活着的进程持有：崩溃/重启留下的锁不算，直接接管
+lock_held_by_live() {
+  [ -f "$COLLECT_LOCK" ] || return 1
+  local pid
+  pid="$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("pid", ""))
+except Exception:
+    print("")' "$COLLECT_LOCK" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    return 0   # 读不出持有者，保守认为还在跑
+  fi
+  kill -0 "$pid" 2>/dev/null
 }
 
 cmd_full_status() {
@@ -374,6 +416,28 @@ PY
   elif [ -f "$COLLECT_LOG" ]; then
     echo "最近 20 行 ($COLLECT_LOG):"
     tail -20 "$COLLECT_LOG"
+  fi
+  if [ -f "$COLLECT_RESUME" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$COLLECT_RESUME" <<'PY'
+import json, sys
+
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+sources = {k: v for k, v in (d.get("sources") or {}).items() if isinstance(v, dict)}
+if not sources:
+    raise SystemExit(0)
+done = [v for v in sources.values() if v.get("status") == "done"]
+unfinished = [v for v in sources.values() if v.get("status") != "done"]
+state = "已跑完" if d.get("done") else "未跑完（再跑 ./server.sh full 会续传）"
+print(f"断点续传: {state}  记录 {len(sources)} 个站点，已完成 {len(done)}，未完成 {len(unfinished)}")
+for v in sorted(unfinished, key=lambda e: str(e.get("name") or ""))[:10]:
+    print(f"  ↻ {v.get('name')}: 从第 {v.get('next_page', '?')} 页继续"
+          f"（已采 {v.get('pages', 0)} 页，共 {v.get('pagecount') or '?'}）")
+if len(unfinished) > 10:
+    print(f"  ... 其余 {len(unfinished) - 10} 个站点见 {sys.argv[1]}")
+PY
   fi
 }
 
@@ -434,6 +498,7 @@ case "$command" in
   full) cmd_full "$@" ;;
   full-status) cmd_full_status ;;
   full-stop) cmd_full_stop ;;
+  resume) run_py feicms resume "$@" ;;
   health) run_py feicms health ;;
   stats) run_py feicms stats ;;
   images) run_py feicms images "$@" ;;

@@ -1,5 +1,5 @@
 import React from "react";
-import { api, type CollectProgress, type SourceProgress } from "./api";
+import { api, type CollectProgress, type CollectResume, type SourceProgress } from "./api";
 
 type Notify = (msg: string, kind?: "success" | "error") => void;
 
@@ -29,7 +29,9 @@ function percent(s: SourceProgress): number {
 
 export default function Collect({ notify }: { notify: Notify }) {
   const [progress, setProgress] = React.useState<CollectProgress | null>(null);
+  const [checkpoint, setCheckpoint] = React.useState<CollectResume | null>(null);
   const [pages, setPages] = React.useState("");
+  const [resume, setResume] = React.useState(true);
   const [filter, setFilter] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
@@ -38,6 +40,10 @@ export default function Collect({ notify }: { notify: Notify }) {
       .collectProgress()
       .then(setProgress)
       .catch((e) => notify((e as Error).message, "error"));
+    api
+      .collectResume()
+      .then(setCheckpoint)
+      .catch(() => setCheckpoint(null));
   }, [notify]);
 
   React.useEffect(() => {
@@ -47,14 +53,19 @@ export default function Collect({ notify }: { notify: Notify }) {
   }, [load]);
 
   const pageCount = pages === "" ? undefined : Number(pages);
+  const fullSweep = pageCount === 0;
 
-  const run = async (body: { pages?: number; source_ids?: number[] }, message: (state: CollectProgress) => string) => {
+  const run = async (
+    body: { pages?: number; source_ids?: number[]; names?: string[]; resume?: boolean },
+    message: (state: CollectProgress) => string
+  ) => {
     setBusy(true);
     try {
       const state = await api.collectStart(body);
       setProgress(state);
       if (state.error) notify(`采集失败：${state.error}`, "error");
       else notify(message(state));
+      load();
     } catch (e) {
       notify((e as Error).message, "error");
     } finally {
@@ -63,11 +74,35 @@ export default function Collect({ notify }: { notify: Notify }) {
   };
 
   const startAll = () =>
-    run({ pages: pageCount }, (state) => `采集已启动：${state.total_sources} 个站点，后台进行中`);
+    run(
+      { pages: pageCount, resume: fullSweep ? resume : undefined },
+      (state) =>
+        `采集已启动：${state.total_sources} 个站点，后台进行中` +
+        (fullSweep && resume && checkpoint?.exists && !checkpoint.done ? "（从断点续传）" : "")
+    );
+
+  const clearCheckpoint = async () => {
+    try {
+      await api.collectResumeClear();
+      setCheckpoint({
+        exists: false,
+        done: false,
+        started_at: null,
+        updated_at: null,
+        sources: 0,
+        finished: 0,
+        detail: [],
+        pending: [],
+      });
+      notify("断点已清除，下次全量从头开始");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  };
 
   const collectOne = (s: SourceProgress, full = false) =>
     run(
-      { source_ids: [s.source_id], pages: full ? 0 : pageCount },
+      { source_ids: [s.source_id], pages: full ? 0 : pageCount, resume: full ? resume : undefined },
       () => `已启动 ${s.name} 的${full ? "全量" : ""}采集`
     );
 
@@ -113,7 +148,19 @@ export default function Collect({ notify }: { notify: Notify }) {
           {busy || progress?.running ? "采集中…" : "采集全部"}
         </button>
         {pages === "0" && (
-          <span className="muted">全量按每个站真实报告的所有页遍历，常见站点 3000～8000 页，一轮可能几十分钟</span>
+          <>
+            <label className="label cursor-pointer gap-2 py-0">
+              <input
+                type="checkbox"
+                className="checkbox checkbox-sm"
+                checked={resume}
+                disabled={busy || progress?.running}
+                onChange={(e) => setResume(e.target.checked)}
+              />
+              <span className="label-text text-xs">断点续传</span>
+            </label>
+            <span className="muted">全量按每个站真实报告的所有页遍历，常见站点 3000～8000 页，一轮可能几十分钟</span>
+          </>
         )}
         {progress?.failed_sources ? (
           <button className="btn btn-sm btn-outline" onClick={retryFailed} disabled={busy || progress?.running}>
@@ -127,9 +174,33 @@ export default function Collect({ notify }: { notify: Notify }) {
       </div>
 
       <p className="cli-hint muted">
-        不想开网页：在服务器上跑 <code>./server.sh full</code>，后台全量扫描；
+        不想开网页：在服务器上跑 <code>./server.sh full</code>（默认断点续传，中断后再跑会接着扫），
         日志 <code>data/collect.log</code>，进度 <code>./server.sh full-status</code>，停止 <code>./server.sh full-stop</code>
       </p>
+
+      {checkpoint?.exists ? (
+        <p className={checkpoint.done ? "cli-hint muted" : "cli-hint"}>
+          <span className={checkpoint.done ? "muted" : "text-warning"}>断点续传：</span>
+          {checkpoint.done
+            ? `上次全量已跑完（${checkpoint.finished}/${checkpoint.sources} 个站点），下次全量会重新开始`
+            : `上次全量没跑完，${checkpoint.finished}/${checkpoint.sources} 个站点已完成，其余会从记录页继续`}
+          {!checkpoint.done && resume ? "（本轮勾了断点续传）" : ""}
+          {!checkpoint.done && !resume ? "（本轮未勾断点续传，会从第 1 页重扫）" : ""}
+          <button className="btn btn-xs btn-ghost" onClick={clearCheckpoint} disabled={busy || progress?.running}>
+            清除断点
+          </button>
+          {!checkpoint.done && checkpoint.pending.length ? (
+            <span className="muted">
+              · 待续传：
+              {checkpoint.pending
+                .slice(0, 4)
+                .map((d) => `${d.name}(第${d.next_page}页)`)
+                .join("、")}
+              {checkpoint.pending.length > 4 ? ` 等 ${checkpoint.pending.length} 个` : ""}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
 
       <div className="card bg-base-100 border border-base-300">
         <div className="card-body">

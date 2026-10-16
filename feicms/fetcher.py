@@ -10,6 +10,8 @@ reachable. httpx is kept as a last-resort fallback.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
@@ -64,6 +66,36 @@ class FetchResult:
     content: bytes | None = None
 
 
+@contextlib.contextmanager
+def _env_without_unusable_proxies():
+    """Hide proxy env vars the httpx fallback cannot handle.
+
+    httpx only understands http/https/socks5/socks5h proxies, and even socks5
+    needs the optional `socksio` package. A `socks://` ALL_PROXY (the usual
+    clash/v2ray/v2rayN setting) otherwise makes `httpx.AsyncClient(...)` raise
+    `ValueError: Unknown scheme for proxy URL` at construction time, which would
+    take the whole collector down before it sends a single request. libcurl
+    (curl_cffi) still sees the untouched environment.
+    """
+    unusable_schemes = {"socks", "socks4", "socks4a"}
+    removed: dict[str, str] = {}
+    for key in [k for k in os.environ if k.lower() == "proxy" or k.lower().endswith("_proxy")]:
+        value = os.environ.get(key, "")
+        scheme = value.split("://", 1)[0].strip().lower()
+        unusable = scheme in unusable_schemes
+        if scheme in {"socks5", "socks5h"}:
+            try:
+                import socksio  # noqa: F401
+            except ImportError:
+                unusable = True
+        if unusable:
+            removed[key] = os.environ.pop(key)
+    try:
+        yield
+    finally:
+        os.environ.update(removed)
+
+
 class Fetcher:
     """Browser-impersonating HTTP client with retries and an httpx fallback."""
 
@@ -72,12 +104,13 @@ class Fetcher:
         requested = impersonate or settings.impersonate
         self.impersonate = requested if requested in _AVAILABLE_PROFILES else IMPERSONATE_PROFILES[0]
         self._curl: dict[str, curl_requests.AsyncSession] = {}
-        self._httpx = httpx.AsyncClient(
-            timeout=self.timeout,
-            headers={"User-Agent": settings.user_agent, **DEFAULT_HEADERS},
-            follow_redirects=True,
-            verify=False,
-        )
+        with _env_without_unusable_proxies():
+            self._httpx = httpx.AsyncClient(
+                timeout=self.timeout,
+                headers={"User-Agent": settings.user_agent, **DEFAULT_HEADERS},
+                follow_redirects=True,
+                verify=False,
+            )
 
     def _session(self, profile: str) -> curl_requests.AsyncSession:
         session = self._curl.get(profile)

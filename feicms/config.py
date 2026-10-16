@@ -84,6 +84,12 @@ class Settings:
     # Live snapshot of a running sweep so `./server.sh full-status` can show
     # progress without tailing the log.
     status_file: str = _env("FEICMS_STATUS_FILE", str(BASE_DIR / "data" / "collect_status.json"))
+    # 断点续传: per-source checkpoint of a long `--full` sweep. An interrupted run
+    # (reboot, Ctrl-C, killed process) resumes from the recorded page instead of
+    # walking hundreds of thousands of pages again. `resume` gates the whole
+    # feature; the CLI/panel can still override it per run.
+    resume_file: str = _env("FEICMS_RESUME_FILE", str(BASE_DIR / "data" / "collect_resume.json"))
+    resume: bool = _env_bool("FEICMS_RESUME", True)
 
     # Images (vod_pic posters). Files are sharded by sha256 of the image bytes:
     #   <image_dir>/<sha[0:2]>/<sha[2:4]>/<sha>.<ext>

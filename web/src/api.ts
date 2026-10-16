@@ -128,6 +128,29 @@ export interface CollectProgress {
   sources: SourceProgress[];
 }
 
+/** 断点续传: per-source checkpoint of a full sweep (data/collect_resume.json). */
+export interface CollectResumeSource {
+  source_id: number;
+  name: string;
+  status: "running" | "done" | "failed";
+  pages: number;
+  pagecount: number;
+  inserted: number;
+  updated: number;
+  next_page: number;
+}
+
+export interface CollectResume {
+  exists: boolean;
+  done: boolean;
+  started_at: string | null;
+  updated_at: string | null;
+  sources: number;
+  finished: number;
+  detail: CollectResumeSource[];
+  pending: CollectResumeSource[];
+}
+
 export interface MergeResult {
   groups: number;
   removed: number;
@@ -439,9 +462,12 @@ export const api = {
   deleteSource: (id: number) => authorizedFetch(`/api/sources/${id}`, { method: "DELETE" }),
   toggleSource: (id: number, enabled: boolean) =>
     request<Source>(`/api/sources/${id}/enable`, { method: "POST", body: JSON.stringify({ enabled }) }),
-  collectStart: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean } = {}) =>
+  collectStart: (body: { pages?: number; names?: string[]; source_ids?: number[]; all?: boolean; resume?: boolean } = {}) =>
     request<CollectProgress>("/api/collect/start", { method: "POST", body: JSON.stringify(body) }),
   collectProgress: () => request<CollectProgress>("/api/collect/progress"),
+  collectResume: () => request<CollectResume>("/api/collect/resume"),
+  collectResumeClear: () =>
+    request<{ cleared: boolean }>("/api/collect/resume", { method: "DELETE" }),
   healthCheck: () => request<HealthReport>("/api/health-check", { method: "POST" }),
   videos: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();

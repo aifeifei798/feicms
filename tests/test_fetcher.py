@@ -45,3 +45,14 @@ def test_fetch_raises_fetch_error_on_unreachable_host():
         assert "definitely-not-a-real-host.invalid" in str(exc)
     finally:
         asyncio.run(fetcher.aclose())
+
+
+def test_unsupported_proxy_env_does_not_break_the_client(monkeypatch):
+    """`ALL_PROXY=socks://...` (clash/v2ray default) must not crash construction."""
+    import os
+
+    monkeypatch.setenv("ALL_PROXY", "socks://127.0.0.1:10808")
+    fetcher = Fetcher()
+    assert fetcher.impersonate in IMPERSONATE_PROFILES
+    # Only httpx is shielded; libcurl (the primary engine) still sees the proxy.
+    assert os.environ["ALL_PROXY"] == "socks://127.0.0.1:10808"

@@ -25,12 +25,14 @@ from .auth import (
     require_auth,
 )
 from .collector import (
+    clear_resume,
     collect_all,
     collect_progress,
     collect_source,
     compact_raw_plays,
     merge_duplicates,
     repair_plays,
+    resume_summary,
     start_collect_all,
 )
 from .config import settings, update_env_file
@@ -389,7 +391,12 @@ async def collect_many(payload: CollectRequest) -> list[dict[str, Any]]:
 
 @router.post("/collect/start")
 async def collect_start(payload: CollectRequest) -> dict[str, Any]:
-    """Start a sweep in the background; poll /api/collect/progress for live status."""
+    """Start a sweep in the background; poll /api/collect/progress for live status.
+
+    A full sweep (`pages=0`) keeps a checkpoint per source, so unless
+    `resume=false` is sent it continues an interrupted sweep instead of starting
+    from page 1.
+    """
     if collect_progress()["running"]:
         raise HTTPException(409, "采集正在进行中，请等待当前一轮完成")
     return await start_collect_all(
@@ -397,7 +404,21 @@ async def collect_start(payload: CollectRequest) -> dict[str, Any]:
         pages=payload.pages,
         only_enabled=not payload.all,
         source_ids=payload.source_ids,
+        resume=payload.resume,
     )
+
+
+@router.get("/collect/resume")
+async def collect_resume_status() -> dict[str, Any]:
+    """断点续传 checkpoint: what a resumed full sweep would skip."""
+    return resume_summary()
+
+
+@router.delete("/collect/resume")
+async def collect_resume_clear() -> dict[str, Any]:
+    """Drop the checkpoint so the next full sweep starts from page 1."""
+    clear_resume()
+    return {"cleared": True}
 
 
 @router.get("/collect/progress")

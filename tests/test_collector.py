@@ -9,6 +9,9 @@ import time
 
 os.environ.setdefault("FEICMS_DB", f"sqlite+aiosqlite:///{tempfile.mkdtemp()}/collector.db")
 os.environ.setdefault("FEICMS_AUTO_COLLECT", "false")
+# Keep the 断点续传 checkpoint (and lock) out of the real data/ directory.
+os.environ.setdefault("FEICMS_RESUME_FILE", f"{tempfile.mkdtemp()}/collect_resume.json")
+os.environ.setdefault("FEICMS_LOCK_FILE", f"{tempfile.mkdtemp()}/collect.lock")
 
 from sqlalchemy import select  # noqa: E402
 
