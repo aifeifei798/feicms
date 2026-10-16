@@ -104,7 +104,7 @@ export default function Sources({ notify }: { notify: Notify }) {
             );
           })}
         </div>
-        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>新增站点</button>>
+        <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>新增站点</button>
         <button className="btn btn-sm btn-outline" onClick={runHealthCheck} disabled={checking}>
           {checking ? "检查中…" : "健康检查"}
         </button>
