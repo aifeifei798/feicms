@@ -470,6 +470,11 @@ export const api = {
     request<{ cleared: boolean }>("/api/collect/resume", { method: "DELETE" }),
   healthCheck: (onlyEnabled = true, reenable = true) =>
     request<HealthReport>(`/api/health-check?only_enabled=${onlyEnabled}&reenable=${reenable}`, { method: "POST" }),
+  singleHealthCheck: (id: number, disableOnFail = true) =>
+    request<{
+      source_id: number; name: string; ok: boolean; latency_ms: number;
+      status_code: number; items: number; message: string;
+    }>(`/api/sources/${id}/health?disable_on_fail=${disableOnFail}`, { method: "POST" }),
   videos: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
     return request<Page<VideoSummary>>(`/api/videos?${qs}`);

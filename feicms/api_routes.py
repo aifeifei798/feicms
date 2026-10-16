@@ -37,7 +37,7 @@ from .collector import (
 )
 from .config import settings, update_env_file
 from .db import session
-from .health import health_check_all, health_rank
+from .health import check_source, health_check_all, health_rank
 from .images import (
     download_images,
     download_progress,
@@ -428,9 +428,21 @@ async def collect_status() -> dict[str, Any]:
 
 
 @router.post("/health-check", response_model=HealthReport)
-async def run_health_check(only_enabled: bool = True, reenable: bool = True) -> HealthReport:
+async def run_health_check(
+    only_enabled: bool = True,
+    reenable: bool = True,
+    disable_on_fail: bool = True,
+    health_timeout: float = 8.0,
+    retries: int = 1,
+) -> HealthReport:
     """Probe all sources. Probing also re-enables the ones a previous run disabled."""
-    results = await health_check_all(only_enabled=only_enabled, reenable=reenable)
+    results = await health_check_all(
+        only_enabled=only_enabled,
+        reenable=reenable,
+        disable_on_fail=disable_on_fail,
+        timeout=health_timeout,
+        retries=retries,
+    )
     return HealthReport(
         checked=len(results),
         ok=sum(1 for r in results if r.ok),
@@ -450,15 +462,34 @@ async def run_health_check(only_enabled: bool = True, reenable: bool = True) -> 
     )
 
 
-@router.post("/sources/{source_id}/enable")
-async def enable_source(source_id: int, payload: EnableRequest) -> SourceOut:
+@router.post("/sources/{source_id}/health")
+async def single_health_check(source_id: int, disable_on_fail: bool = False) -> dict[str, Any]:
+    """Probe a single source (and re-enable it when ok, disable when broken)."""
     async with session() as s:
         src = await s.get(Source, source_id)
         if src is None:
             raise HTTPException(404, "source not found")
-        src.enabled = payload.enabled
-        await s.flush()
-        return src
+    result = await check_source(src, disable_on_fail=disable_on_fail)
+    return {
+        "source_id": result.source_id,
+        "name": result.name,
+        "ok": result.ok,
+        "latency_ms": result.latency_ms,
+        "status_code": result.status_code,
+        "items": result.items,
+        "message": result.message,
+    }
+
+
+    @router.post("/sources/{source_id}/enable", response_model=SourceOut)
+    async def enable_source(source_id: int, payload: EnableRequest) -> SourceOut:
+        async with session() as s:
+            src = await s.get(Source, source_id)
+            if src is None:
+                raise HTTPException(404, "source not found")
+            src.enabled = payload.enabled
+            await s.flush()
+            return src
 
 
 # --------------------------------------------------------------------------- subscriptions

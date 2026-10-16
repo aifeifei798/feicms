@@ -151,6 +151,23 @@ export default function Sources({ notify }: { notify: Notify }) {
                   <td>
                     <div className="flex gap-1">
                       <button className="btn btn-xs btn-outline" onClick={() => setEditing(s)}>编辑</button>
+                      <button
+                        className="btn btn-xs btn-outline"
+                        onClick={async () => {
+                          try {
+                            const r = await api.singleHealthCheck(s.id, true);
+                            notify(
+                              `${s.name}: ${r.ok ? "可达" : "不可用"}（${r.items} 条，${r.latency_ms} ms）${r.message ? " · " + r.message : ""}`,
+                              r.ok ? "success" : "error"
+                            );
+                            load();
+                          } catch (e) {
+                            notify((e as Error).message, "error");
+                          }
+                        }}
+                      >
+                        探活
+                      </button>
                       <button className="btn btn-xs btn-outline" onClick={() => toggle(s)}>
                         {s.enabled ? "禁用" : "启用"}
                       </button>
