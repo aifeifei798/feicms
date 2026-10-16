@@ -60,6 +60,9 @@ export default function Sources({ notify }: { notify: Notify }) {
       const r = await api.healthCheck();
       setReport(r);
       const slowest = r.results.reduce((a, b) => Math.max(a, b.latency_ms), 0);
+      // 健康检查会把挂掉的源禁用并标 dead：禁用它们不会"消失"在列表顶部，
+      // 所以这里把"仅启用"过滤取消，方便用户看到刚才被禁用的 17 个
+      setOnlyEnabled(false);
       notify(
         `健康检查：${r.ok} 正常 / ${r.dead} 不可用（共 ${r.checked} 个站点，最慢 ${slowest} ms）`,
         r.dead ? "error" : "success"
