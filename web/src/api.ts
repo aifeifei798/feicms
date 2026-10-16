@@ -468,7 +468,8 @@ export const api = {
   collectResume: () => request<CollectResume>("/api/collect/resume"),
   collectResumeClear: () =>
     request<{ cleared: boolean }>("/api/collect/resume", { method: "DELETE" }),
-  healthCheck: () => request<HealthReport>("/api/health-check", { method: "POST" }),
+  healthCheck: (onlyEnabled = true, reenable = true) =>
+    request<HealthReport>(`/api/health-check?only_enabled=${onlyEnabled}&reenable=${reenable}`, { method: "POST" }),
   videos: (params: Record<string, string | number>) => {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
     return request<Page<VideoSummary>>(`/api/videos?${qs}`);

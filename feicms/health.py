@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import case, select
+from sqlalchemy import case, select, update
 
 from .config import settings
 from .fetcher import Fetcher, build_query, fetch
@@ -76,8 +76,15 @@ async def check_source(source: Source, client: Fetcher | None = None) -> HealthR
     return result
 
 
-async def health_check_all(only_enabled: bool = True) -> list[HealthResult]:
+async def health_check_all(only_enabled: bool = True, reenable: bool = False) -> list[HealthResult]:
     import asyncio
+
+    # 用户点的「健康检查」：先把所有源重新启用，再探活，避免上次被自动禁用的源永远不能 comeback。
+    if reenable:
+        only_enabled = False
+        async with session() as s:
+            await s.execute(update(Source).values(enabled=True, fail_streak=0))
+            await s.commit()
 
     async with session() as s:
         stmt = select(Source)

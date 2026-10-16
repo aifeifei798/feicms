@@ -252,9 +252,9 @@ const GROUPS: Group[] = [
       {
         method: "POST",
         path: "/api/health-check",
-        summary: "对所有源做一次连通性 + 数据解析检查，写回 health_status / latency_ms",
+        summary: "对所有源做一次连通性 + 数据解析检查，先重新启用所有被禁用的源（reenable=true 时）再去探活，写回 health_status / latency_ms",
         params: [{ name: "only_enabled", type: "bool", default: "true", note: "false 时也检查禁用源" }],
-        example: "curl -X POST 'http://127.0.0.1:8000/api/health-check?only_enabled=true'",
+        example: "curl -X POST 'http://127.0.0.1:8000/api/health-check?only_enabled=true&reenable=true'",
       },
       {
         method: "GET",

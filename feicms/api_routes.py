@@ -428,8 +428,9 @@ async def collect_status() -> dict[str, Any]:
 
 
 @router.post("/health-check", response_model=HealthReport)
-async def run_health_check(only_enabled: bool = True) -> HealthReport:
-    results = await health_check_all(only_enabled=only_enabled)
+async def run_health_check(only_enabled: bool = True, reenable: bool = True) -> HealthReport:
+    """Probe all sources. Probing also re-enables the ones a previous run disabled."""
+    results = await health_check_all(only_enabled=only_enabled, reenable=reenable)
     return HealthReport(
         checked=len(results),
         ok=sum(1 for r in results if r.ok),

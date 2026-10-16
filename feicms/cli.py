@@ -403,7 +403,7 @@ def health() -> None:
     """Probe every enabled source and record latency/availability."""
 
     async def _run() -> None:
-        results = await health_check_all()
+        results = await health_check_all(reenable=True)
         table = Table(title="source health")
         table.add_column("name")
         table.add_column("ok")
