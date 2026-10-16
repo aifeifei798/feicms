@@ -18,6 +18,14 @@ const HEALTH_BADGE: Record<string, string> = {
   unknown: "badge badge-ghost",
 };
 
+const HEALTH_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "全部" },
+  { value: "ok", label: "正常" },
+  { value: "slow", label: "较慢" },
+  { value: "dead", label: "不可用" },
+  { value: "unknown", label: "未知" },
+];
+
 export default function Sources({ notify }: { notify: Notify }) {
   const [sources, setSources] = React.useState<Source[]>([]);
   const [q, setQ] = React.useState("");
@@ -82,13 +90,20 @@ export default function Sources({ notify }: { notify: Notify }) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <select className="select input-bordered" value={health} onChange={(e) => setHealth(e.target.value)}>
-          <option value="">全部健康状态</option>
-          <option value="ok">ok</option>
-          <option value="slow">slow</option>
-          <option value="dead">dead</option>
-          <option value="unknown">unknown</option>
-        </select>
+        <div className="inline-flex flex-wrap gap-1">
+          {HEALTH_FILTERS.map((f) => {
+            const active = health === f.value;
+            return (
+              <button
+                key={f.value || "all"}
+                className={"btn btn-xs " + (active ? "btn-primary" : "btn-outline")}
+                onClick={() => setHealth(f.value)}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
         <label className="label mr-2">
           <input type="checkbox" checked={onlyEnabled} onChange={(e) => setOnlyEnabled(e.target.checked)} />
           <span className="ml-1">仅启用</span>
