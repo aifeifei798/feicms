@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -39,6 +41,44 @@ engine = create_async_engine(
 )
 
 SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+_WRITE_LOCK: asyncio.Lock | None = None
+_WRITE_LOCK_LOOP = None
+
+
+def write_lock():
+    """Serialize SQLite writes so concurrent sources don't trip 'database is locked'.
+
+    For non-sqlite backends this returns an async no-op context manager.
+    """
+    if not IS_SQLITE:
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _noop():
+            yield
+
+        return _noop()
+
+    global _WRITE_LOCK, _WRITE_LOCK_LOOP
+    loop = asyncio.get_event_loop()
+    if _WRITE_LOCK is None or _WRITE_LOCK_LOOP is not loop:
+        _WRITE_LOCK = asyncio.Lock()
+        _WRITE_LOCK_LOOP = loop
+    return _WRITE_LOCK
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _sqlite_pragmas(dbapi_connection, _connection_record):
+    if not IS_SQLITE:
+        return
+    cur = dbapi_connection.cursor()
+    # Give a waiting writer 60s to acquire the lock before raising "database is locked".
+    cur.execute("PRAGMA busy_timeout=60000")
+    # WAL already set in init_db, but re-assert on every new connection is harmless.
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.close()
 
 
 @asynccontextmanager

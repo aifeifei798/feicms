@@ -11,7 +11,7 @@ from .config import settings
 from .fetcher import Fetcher, build_query, fetch
 from .models import Source
 from .normalizer import parse_response
-from .db import session
+from .db import session, write_lock
 
 
 @dataclass
@@ -60,19 +60,20 @@ async def check_source(source: Source, client: Fetcher | None = None) -> HealthR
         if own:
             await client.aclose()
 
-    async with session() as s:
-        src = await s.get(Source, source.id)
-        if src is not None:
-            src.last_health_at = datetime.now(timezone.utc)
-            src.latency_ms = result.latency_ms
-            if result.ok:
-                src.health_status = "slow" if result.latency_ms > 5000 else "ok"
-                src.fail_streak = 0
-                src.last_error = None
-            else:
-                src.fail_streak = (src.fail_streak or 0) + 1
-                src.last_error = result.message
-                src.health_status = "dead" if src.fail_streak >= settings.health_fail_threshold else "slow"
+    async with write_lock():
+        async with session() as s:
+            src = await s.get(Source, source.id)
+            if src is not None:
+                src.last_health_at = datetime.now(timezone.utc)
+                src.latency_ms = result.latency_ms
+                if result.ok:
+                    src.health_status = "slow" if result.latency_ms > 5000 else "ok"
+                    src.fail_streak = 0
+                    src.last_error = None
+                else:
+                    src.fail_streak = (src.fail_streak or 0) + 1
+                    src.last_error = result.message
+                    src.health_status = "dead" if src.fail_streak >= settings.health_fail_threshold else "slow"
     return result
 
 

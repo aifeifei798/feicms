@@ -19,7 +19,7 @@ from .config import settings
 from .fetcher import Fetcher, build_query, fetch
 from .models import CollectJob, Image, Source, SourceItem, SourceType, Video
 from .normalizer import VodItem, build_signature, clean_text, parse_play_url, parse_raw_items, parse_response
-from .db import IS_SQLITE, session
+from .db import IS_SQLITE, session, write_lock
 
 log = logging.getLogger("feicms.collector")
 
@@ -420,15 +420,16 @@ async def collect_source(
     try:
         type_map = await load_type_map(client, source)
         if type_map:
-            async with session() as s:
-                for tid, tname in type_map.items():
-                    existing = await s.scalar(
-                        select(SourceType).where(SourceType.source_id == source.id, SourceType.type_id == tid)
-                    )
-                    if existing:
-                        existing.type_name = tname
-                    else:
-                        s.add(SourceType(source_id=source.id, type_id=tid, type_name=tname))
+            async with write_lock():
+                async with session() as s:
+                    for tid, tname in type_map.items():
+                        existing = await s.scalar(
+                            select(SourceType).where(SourceType.source_id == source.id, SourceType.type_id == tid)
+                        )
+                        if existing:
+                            existing.type_name = tname
+                        else:
+                            s.add(SourceType(source_id=source.id, type_id=tid, type_name=tname))
 
         page = max(1, int(start_page or 1))
         previous_key: str | None = None
@@ -494,10 +495,11 @@ async def collect_source(
             page_changes = 0
             for attempt in range(5):
                 try:
-                    async with session() as s:
-                        inserted, updated, skipped, page_changes = await upsert_page(
-                            s, source, items, type_map
-                        )
+                    async with write_lock():
+                        async with session() as s:
+                            inserted, updated, skipped, page_changes = await upsert_page(
+                                s, source, items, type_map
+                            )
                     last_latency = response.latency_ms
                     result.inserted += inserted
                     result.updated += updated
@@ -533,32 +535,34 @@ async def collect_source(
 
         if result.pages:
             # Source stats are refreshed once per sweep instead of once per page.
+            async with write_lock():
+                async with session() as s:
+                    src = await s.get(Source, source.id)
+                    if src is not None:
+                        src.last_collect_at = datetime.now(timezone.utc)
+                        src.last_page = result.pages
+                        if last_latency is not None:
+                            src.latency_ms = int(last_latency)
+                        src.health_status = "ok"
+                        src.fail_streak = 0
+                        src.last_error = None
+                        src.item_count = (
+                            await s.scalar(
+                                select(func.count()).select_from(SourceItem).where(SourceItem.source_id == source.id)
+                            )
+                            or 0
+                        )
+    except Exception as exc:  # noqa: BLE001
+        result.error = str(exc)
+        async with write_lock():
             async with session() as s:
                 src = await s.get(Source, source.id)
                 if src is not None:
-                    src.last_collect_at = datetime.now(timezone.utc)
-                    src.last_page = result.pages
-                    if last_latency is not None:
-                        src.latency_ms = int(last_latency)
-                    src.health_status = "ok"
-                    src.fail_streak = 0
-                    src.last_error = None
-                    src.item_count = (
-                        await s.scalar(
-                            select(func.count()).select_from(SourceItem).where(SourceItem.source_id == source.id)
-                        )
-                        or 0
-                    )
-    except Exception as exc:  # noqa: BLE001
-        result.error = str(exc)
-        async with session() as s:
-            src = await s.get(Source, source.id)
-            if src is not None:
-                src.fail_streak = (src.fail_streak or 0) + 1
-                src.last_error = str(exc)
-                src.last_health_at = datetime.now(timezone.utc)
-                if src.fail_streak >= settings.health_fail_threshold:
-                    src.health_status = "dead"
+                    src.fail_streak = (src.fail_streak or 0) + 1
+                    src.last_error = str(exc)
+                    src.last_health_at = datetime.now(timezone.utc)
+                    if src.fail_streak >= settings.health_fail_threshold:
+                        src.health_status = "dead"
     finally:
         if own_client:
             await client.aclose()
