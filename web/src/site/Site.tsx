@@ -3,7 +3,7 @@ import { siteApi, type SiteFilters, type Video, type VideoSummary } from "../api
 import { POSTER_PLACEHOLDER, posterFallback } from "../poster";
 import Player from "./Player";
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 30; // 6 columns x 5 rows
 
 /** Compact page list: 1 … 4 5 6 … 20 */
 function pageNumbers(current: number, pages: number): (number | "…")[] {
@@ -319,7 +319,7 @@ export default function Site() {
             ))}
             {items.length === 0 && !loading && <div className="muted">没有结果，换个关键词或分类试试。</div>}
             {loading &&
-              Array.from({ length: 12 }).map((_, i) => (
+              Array.from({ length: PAGE_SIZE }).map((_, i) => (
                 <div className="poster poster-skeleton" key={`skeleton-${i}`}>
                   <div className="poster-frame skeleton-frame" />
                   <div className="poster-meta">
