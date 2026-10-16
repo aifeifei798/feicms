@@ -79,7 +79,7 @@ def test_duplicate_source_rejected():
     assert client.post("/api/sources", json=payload).status_code == 409
 
 
-def test_source_list_puts_dead_and_disabled_last():
+def test_source_list_puts_disabled_and_dead_first():
     _seed()
 
     async def _mark() -> None:
@@ -106,7 +106,7 @@ def test_source_list_puts_dead_and_disabled_last():
 
     names = [s["name"] for s in client.get("/api/sources").json()]
     mine = [n for n in names if n in {"健康站", "慢站", "未知站", "死亡站", "禁用站"}]
-    assert mine == ["健康站", "慢站", "未知站", "死亡站", "禁用站"]
+    assert mine == ["禁用站", "死亡站", "未知站", "慢站", "健康站"]
 
 
 def test_video_search_and_detail():
