@@ -26,16 +26,17 @@ class HealthResult:
 
 
 def health_rank() -> Any:
-    """SQL sort key used by the source list: healthy first, dead/disabled last.
+    """SQL sort key used by the source list: broken/disabled first, healthy last.
 
-    ok(0) → slow(1) → unknown(2) → dead(3) → disabled(4), ties broken by priority.
+    手动跑完健康检查后被禁用的源会立刻浮到列表顶部，避免「禁用的站消失在底部，
+    用户以为它们没显示」——坏站应该最先看到，便于启用/选中； ties broken by priority.
     """
     return case(
-        (Source.enabled.is_(False), 4),
-        (Source.health_status == "dead", 3),
+        (Source.enabled.is_(False), 0),
+        (Source.health_status == "dead", 1),
         (Source.health_status == "unknown", 2),
-        (Source.health_status == "slow", 1),
-        (Source.health_status == "ok", 0),
+        (Source.health_status == "slow", 3),
+        (Source.health_status == "ok", 4),
         else_=2,
     )
 
