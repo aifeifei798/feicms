@@ -243,6 +243,44 @@ def test_uncategorised_label_matches_empty_categories():
         settings.hide_adult = previous
 
 
+def test_title_search_uses_the_fts_index():
+    import asyncio
+
+    async def _inner() -> int:
+        await init_db()
+        async with session() as s:
+            signature = build_signature("搜索索引测试影片")
+            video = await s.scalar(select(Video).where(Video.signature == signature))
+            if video is None:
+                video = Video(
+                    name="搜索索引测试影片",
+                    signature=signature,
+                    type_name="电影",
+                    source_count=1,
+                )
+                s.add(video)
+                await s.commit()
+            return video.id
+
+    video_id = asyncio.run(_inner())
+
+    # 3+ characters go through the trigram index, shorter queries use LIKE.
+    assert client.get("/api/site/videos", params={"q": "搜索索引", "hide_adult": "false"}).json()["total"] == 1
+    assert client.get("/api/site/videos", params={"q": "搜索", "hide_adult": "false"}).json()["total"] == 1
+
+    async def _rename() -> None:
+        async with session() as s:
+            video = await s.get(Video, video_id)
+            video.name = "搜索索引改名后影片"
+            await s.commit()
+
+    asyncio.run(_rename())
+
+    # The triggers keep the index in sync: the new title is found, the old one is not.
+    assert client.get("/api/site/videos", params={"q": "改名后", "hide_adult": "false"}).json()["total"] == 1
+    assert client.get("/api/site/videos", params={"q": "索引测试", "hide_adult": "false"}).json()["total"] == 0
+
+
 def test_spa_deep_links_fall_back_to_the_app():
     from feicms.api import STATIC_ROOT
 

@@ -4,17 +4,18 @@ import csv
 import io
 import json
 import secrets
+import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import func, not_, select
+from sqlalchemy import event, func, select, text
 from sqlalchemy.sql.expression import ColumnElement
 
 from .apikeys import create_api_key, delete_api_key, list_api_keys, update_api_key
-from .adult import adult_condition, adult_name_keywords, adult_type_keywords, is_adult
+from .adult import adult_name_keywords, adult_type_keywords
 from .auth import (
     TOKEN_COOKIE,
     auth_enabled,
@@ -36,7 +37,8 @@ from .collector import (
     start_collect_all,
 )
 from .config import settings, update_env_file
-from .db import session
+from . import db
+from .db import IS_SQLITE, session
 from .health import check_source, health_check_all, health_rank
 from .images import (
     download_images,
@@ -344,6 +346,7 @@ async def collect_one(
     if src is None:
         raise HTTPException(404, "source not found")
     result = await collect_source(src, pages=pages)
+    clear_site_cache()
     return {
         "source_id": result.source_id,
         "source_name": result.source_name,
@@ -370,6 +373,7 @@ async def collect_many(payload: CollectRequest) -> list[dict[str, Any]]:
         only_enabled=not payload.all,
         source_ids=payload.source_ids,
     )
+    clear_site_cache()
     return [
         {
             "source_id": r.source_id,
@@ -399,13 +403,15 @@ async def collect_start(payload: CollectRequest) -> dict[str, Any]:
     """
     if collect_progress()["running"]:
         raise HTTPException(409, "采集正在进行中，请等待当前一轮完成")
-    return await start_collect_all(
+    result = await start_collect_all(
         names=payload.names,
         pages=payload.pages,
         only_enabled=not payload.all,
         source_ids=payload.source_ids,
         resume=payload.resume,
     )
+    clear_site_cache()
+    return result
 
 
 @router.get("/collect/resume")
@@ -686,7 +692,7 @@ async def list_videos(
     async with session() as s:
         stmt = select(Video)
         if q:
-            stmt = stmt.where(Video.name.like(f"%{q}%"))
+            stmt = stmt.where(_title_match(q))
         type_condition = _type_condition(type_name)
         if type_condition is not None:
             stmt = stmt.where(type_condition)
@@ -868,11 +874,19 @@ async def update_adult_filter(body: AdultFilterUpdate) -> dict[str, Any]:
         values["FEICMS_ADULT_NAME_KEYWORDS"] = ",".join(settings.adult_name_keywords or ())
     path = update_env_file(values)
 
+    # The front site filters on the materialised flag, so re-sweep the library
+    # whenever the keyword lists actually changed (skipped otherwise).
+    from .adult import refresh_adult_flags
+
+    refresh = await refresh_adult_flags()
+    clear_site_cache()
+
     return {
         "hide_adult": settings.hide_adult,
         "type_keywords": list(adult_type_keywords()),
         "name_keywords": list(adult_name_keywords()),
         "env_file": str(path),
+        "flag_refresh": refresh,
     }
 
 
@@ -888,13 +902,16 @@ async def prune() -> dict[str, int]:
         )
         for video in orphans:
             await s.delete(video)
+    clear_site_cache()
     return {"removed": len(rows), "orphan_videos": len(orphans)}
 
 
 @router.post("/compact-raw")
 async def compact_raw() -> dict[str, int]:
     """Maintenance: drop raw play_url strings already parsed into structured plays, then VACUUM."""
-    return await compact_raw_plays()
+    result = await compact_raw_plays()
+    clear_site_cache()
+    return result
 
 
 @router.post("/repair-plays")
@@ -909,7 +926,9 @@ async def merge_duplicates_endpoint(dry_run: bool = False) -> dict[str, Any]:
 
     `?dry_run=true` only reports how many groups would be merged.
     """
-    return await merge_duplicates(dry_run=dry_run)
+    result = await merge_duplicates(dry_run=dry_run)
+    clear_site_cache()
+    return result
 
 
 @router.get("/export")
@@ -922,7 +941,7 @@ async def export_videos(
     async with session() as s:
         stmt = select(Video).order_by(Video.last_updated.desc()).limit(limit)
         if q:
-            stmt = stmt.where(Video.name.like(f"%{q}%"))
+            stmt = stmt.where(_title_match(q))
         videos = list(await s.scalars(stmt))
         by_video: dict[int, list[SourceItem]] = {}
         if videos:
@@ -1037,7 +1056,7 @@ async def provide_vod(
     async with session() as s:
         stmt = select(Video)
         if q:
-            stmt = stmt.where(Video.name.like(f"%{q}%"))
+            stmt = stmt.where(_title_match(q))
         if t:
             stmt = stmt.where(Video.type_name == t)
         total = await s.scalar(select(func.count()).select_from(stmt.subquery()))
@@ -1086,6 +1105,38 @@ site_router = APIRouter(
     dependencies=[Depends(require_auth)] if not settings.public_site else [],
 )
 
+# The front site's aggregate endpoints (stats, facet counts) are identical for
+# every visitor and only move when a sweep runs, so recomputing them per request
+# is wasted work. Short TTL + explicit invalidation on mutating endpoints.
+_SITE_CACHE: dict[str, tuple[float, Any]] = {}
+_SITE_CACHE_TTL = 60.0
+
+
+def clear_site_cache() -> None:
+    _SITE_CACHE.clear()
+
+
+@event.listens_for(Video, "after_insert")
+@event.listens_for(Video, "after_update")
+@event.listens_for(Video, "after_delete")
+def _invalidate_site_cache_on_write(*_args) -> None:
+    """Any library change makes the cached stats/facets stale.
+
+    Cheap (a dict clear) and it keeps the front site honest even when records are
+    added by the collector, a CLI command or a direct database write.
+    """
+    _SITE_CACHE.clear()
+
+
+async def _site_cached(key: str, producer) -> Any:
+    now = time.monotonic()
+    hit = _SITE_CACHE.get(key)
+    if hit is not None and hit[0] > now - _SITE_CACHE_TTL:
+        return hit[1]
+    value = await producer()
+    _SITE_CACHE[key] = (now, value)
+    return value
+
 
 def _site_pic(video: Video, pic_map: dict[str, int]) -> str | None:
     image_id = pic_map.get(normalize_image_url(video.pic) or "")
@@ -1100,12 +1151,28 @@ def _hide_adult(hide_adult: bool | None) -> ColumnElement | None:
     """Condition that keeps adult records out of a query, or None when off.
 
     `hide_adult` is the explicit query parameter; when it is absent the server
-    default (FEICMS_HIDE_ADULT, changeable from the panel) applies.
+    default (FEICMS_HIDE_ADULT, changeable from the panel) applies. The flag is
+    materialised in `videos.is_adult` (indexed) - the keyword OR-of-LIKEs would
+    force a full scan of the library on every request.
     """
-    if not _effective_hide_adult(hide_adult):
+    return Video.is_adult.is_(False) if _effective_hide_adult(hide_adult) else None
+
+
+def _title_match(q: str) -> ColumnElement | None:
+    """Condition matching titles that contain `q`.
+
+    `name LIKE '%q%'` has to read every row of the library. On SQLite the
+    `videos_fts` trigram index (built by init-db) answers the same query with an
+    index seek. Trigrams need at least 3 characters, so shorter queries keep the
+    LIKE fallback.
+    """
+    if not q:
         return None
-    condition = adult_condition()
-    return not_(condition) if condition is not None else None
+    if IS_SQLITE and db.FTS_READY and len(q) >= 3:
+        phrase = '"' + q.replace('"', '""') + '"'
+        match = text("SELECT rowid FROM videos_fts WHERE videos_fts MATCH :q").params(q=phrase)
+        return Video.id.in_(match)
+    return Video.name.like(f"%{q}%")
 
 
 def _summary(video: Video, pic_map: dict[str, int]) -> VideoSummary:
@@ -1122,8 +1189,7 @@ def _summary(video: Video, pic_map: dict[str, int]) -> VideoSummary:
     )
 
 
-@site_router.get("/stats")
-async def site_stats() -> dict[str, Any]:
+async def _site_aggregates() -> dict[str, Any]:
     async with session() as s:
         videos = await s.scalar(select(func.count(Video.id)))
         sources = await s.scalar(select(func.count(Source.id)).where(Source.enabled))
@@ -1131,21 +1197,23 @@ async def site_stats() -> dict[str, Any]:
             select(func.count(Image.id)).where(Image.status.in_(("downloaded", "duplicate")))
         )
         latest = await s.scalar(select(func.max(Video.last_updated)))
-        condition = adult_condition()
-        adult = await s.scalar(select(func.count(Video.id)).where(condition)) if condition is not None else 0
+        adult = await s.scalar(select(func.count(Video.id)).where(Video.is_adult.is_(True)))
     return {
         "videos": videos or 0,
         "sources": sources or 0,
         "posters": posters or 0,
         "last_updated": latest.isoformat() if latest else None,
         "adult_videos": adult or 0,
-        "hide_adult": settings.hide_adult,
     }
 
 
-@site_router.get("/filters")
-async def site_filters(hide_adult: bool | None = Query(None)) -> dict[str, Any]:
-    """Categories, years and regions present in the library, with counts."""
+@site_router.get("/stats")
+async def site_stats() -> dict[str, Any]:
+    aggregates = await _site_cached("stats", _site_aggregates)
+    return {**aggregates, "hide_adult": settings.hide_adult}
+
+
+async def _site_facets(hide_adult: bool) -> dict[str, Any]:
     async with session() as s:
         stmt = select(Video.type_name, func.count(Video.id))
         filter_ = _hide_adult(hide_adult)
@@ -1170,7 +1238,15 @@ async def site_filters(hide_adult: bool | None = Query(None)) -> dict[str, Any]:
             area
             for area in await s.scalars(area_stmt.group_by(Video.area).order_by(Video.area))
         ]
-    return {"types": types, "years": years, "areas": areas, "hide_adult": _effective_hide_adult(hide_adult)}
+    return {"types": types, "years": years, "areas": areas}
+
+
+@site_router.get("/filters")
+async def site_filters(hide_adult: bool | None = Query(None)) -> dict[str, Any]:
+    """Categories, years and regions present in the library, with counts."""
+    effective = _effective_hide_adult(hide_adult)
+    facets = await _site_cached(f"filters:{effective}", lambda: _site_facets(effective))
+    return {**facets, "hide_adult": effective}
 
 
 @site_router.get("/videos")
@@ -1186,7 +1262,7 @@ async def site_videos(
     async with session() as s:
         stmt = select(Video)
         if q:
-            stmt = stmt.where(Video.name.like(f"%{q}%"))
+            stmt = stmt.where(_title_match(q))
         type_condition = _type_condition(type_name)
         if type_condition is not None:
             stmt = stmt.where(type_condition)
@@ -1216,7 +1292,7 @@ async def site_videos(
 async def site_video(video_id: int, hide_adult: bool | None = Query(None)) -> VideoOut:
     async with session() as s:
         video = await s.get(Video, video_id)
-        if video is None or (_effective_hide_adult(hide_adult) and is_adult(video)):
+        if video is None or (_effective_hide_adult(hide_adult) and video.is_adult):
             raise HTTPException(404, "video not found")
         items = list(await s.scalars(select(SourceItem).where(SourceItem.video_id == video_id)))
         pic_map = await _local_pic_map(s, [video.pic])

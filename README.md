@@ -216,6 +216,7 @@ feicms prune                       # 删除无播放源记录 / 孤儿影片
 feicms repair-plays                # 用当前解析规则重建播放源结构 + 清理文本字段（不联网）
 feicms merge-duplicates [--dry-run] # 合并同标题的重复影片（旧 signature 带年份造成的拆分）
 feicms adult [--on|--off|--show 15] # 前台成人内容过滤：命中统计 / 开关（写 .env）
+feicms reindex                     # 重建标题搜索索引（FTS5，一次性扫全库）
 feicms export [--out backup.jsonl]
 
 feicms images scan                 # 登记所有 pic 字段（不联网）
@@ -376,6 +377,29 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
   命令行等价：`uv run feicms adult`（查看命中）、`--on` / `--off`（开关）。
 - 关键词留空 = 用内置列表；显式设成空字符串 = 不屏蔽任何内容。
 - API：`POST /api/adult-filter`（需要登录）`{"hide_adult": true, "type_keywords": [...], "name_keywords": [...]}`。
+
+**为什么前台不慢：** 关键词过滤是 200 多个 `LIKE` 的 OR，SQLite 无法用索引，每次请求都要扫全表
+（52 万行 ≈ 8.5 秒）。所以命中结果被物化成 `videos.is_adult` 列，并建
+`(is_adult, last_updated)` / `(is_adult, type_name, last_updated)` / `(is_adult, source_count)`
+复合索引，前台查询只读这个标记：
+
+- 采集写入时由 `Video` 的 `before_insert` / `before_update` 监听器自动计算；
+- 关键词改动时 `init-db` 与 `/api/adult-filter` 做一次全表重算（几秒，只跑一次）；
+- 手动重算：`uv run feicms adult --refresh`。
+
+实测（52 万影片）：`/api/site/videos` 1.86s → 0.02s，`/api/site/filters` 4.60s → 0.15s（缓存命中 0.001s），
+`/api/site/stats` 1.84s → 0.03s。`/api/site/stats` 与 `/api/site/filters` 另有 60 秒内存缓存，任何影片写入
+（采集、清理、合并重复、改关键词）都会自动失效它。每轮自动采集结束后还会跑一次 `ANALYZE`，让查询计划保持走索引。
+
+**标题搜索：** `name LIKE '%关键词%'` 同样要扫全表，所以 `init-db` 建一个 FTS5 三字符（trigram）索引
+`videos_fts`，三个触发器（插入 / 删除 / 标题改名）保持它同步——只有标题真的变了才重新索引，采集开销很小。
+
+- 3 个字符及以上走索引：`电影解说` 331 条命中，0.005s（原来 LIKE 约 0.1s，库越大越慢）。
+- 1–2 个字符（如「美人」）三字符索引不支持，自动退回 LIKE，约 0.06s。
+- 手动重建：`uv run feicms reindex`（一次性扫全库，约 15 秒）。
+
+另外 `feicms compact-raw` 清掉已经解析成结构化 `plays` 的原始 `play_url` 并 `VACUUM`，实测数据库从
+1.79 GB 降到 1.44 GB。
 
 ---
 

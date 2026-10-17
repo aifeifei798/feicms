@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 
 from .config import settings
 from .collector import collect_progress, start_collect_all
-from .db import session
+from .db import analyze, session
 from .health import health_check_all
 from .images import download_images, scan_images
 from .models import Source
@@ -100,6 +100,10 @@ async def auto_collect_loop() -> None:
                     state["updated"],
                     state["failed_sources"],
                 )
+                if state["inserted"] or state["updated"]:
+                    # Planner statistics go stale after a big insert; ANALYZE keeps
+                    # the front-site LIMIT queries on the composite indexes.
+                    await analyze()
             except Exception:  # noqa: BLE001
                 log.exception("auto collect failed")
 

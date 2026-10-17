@@ -21,7 +21,7 @@ from .collector import (
     resume_file_path,
     resume_summary,
 )
-from .db import init_db, session
+from .db import init_db, rebuild_fts, session
 from .health import health_check_all, health_rank
 from .adult import adult_condition, adult_name_keywords, adult_type_keywords, matched_keyword
 from .models import Source, Subscription, Video, SourceItem
@@ -37,6 +37,13 @@ def init_db_cmd() -> None:
     """Create tables."""
     asyncio.run(init_db())
     console.print(f"[green]database initialised[/green] -> {settings.database_url}")
+
+
+@app.command("reindex")
+def reindex_cmd() -> None:
+    """Rebuild the title search index (one pass over the library)."""
+    asyncio.run(rebuild_fts())
+    console.print("[green]title search index rebuilt[/green]")
 
 
 @app.command("seed")
@@ -454,6 +461,7 @@ def stats() -> None:
 def adult_filter(
     on: bool = typer.Option(False, "--on", help="开启前台成人内容屏蔽（写入 .env）"),
     off: bool = typer.Option(False, "--off", help="关闭前台成人内容屏蔽（写入 .env）"),
+    refresh: bool = typer.Option(False, "--refresh", help="重新计算 videos.is_adult 标记（关键词改动后）"),
     show: int = typer.Option(15, "--show", help="列出被屏蔽的影片条数"),
 ) -> None:
     """Report what the adult-content filter catches on the public front site."""
@@ -464,28 +472,31 @@ def adult_filter(
         console.print(f"FEICMS_HIDE_ADULT={values['FEICMS_HIDE_ADULT']} 已写入 {path}")
 
     async def _run() -> None:
+        from .adult import refresh_adult_flags
+
+        if refresh:
+            result = await refresh_adult_flags(force=True)
+            console.print(f"标记重新计算: {result}")
+
         async with session() as s:
             total = await s.scalar(select(func.count(Video.id)))
-            condition = adult_condition()
-            if condition is None:
-                adult, rows, types = 0, [], []
-            else:
-                adult = await s.scalar(select(func.count(Video.id)).where(condition))
-                rows = list(
-                    await s.scalars(
-                        select(Video).where(condition).order_by(Video.last_updated.desc()).limit(show)
-                    )
+            condition = Video.is_adult.is_(True)
+            adult = await s.scalar(select(func.count(Video.id)).where(condition))
+            rows = list(
+                await s.scalars(
+                    select(Video).where(condition).order_by(Video.last_updated.desc()).limit(show)
                 )
-                types = [
-                    (name or "未分类", count)
-                    for name, count in await s.execute(
-                        select(Video.type_name, func.count(Video.id))
-                        .where(condition)
-                        .group_by(Video.type_name)
-                        .order_by(func.count(Video.id).desc())
-                        .limit(15)
-                    )
-                ]
+            )
+            types = [
+                (name or "未分类", count)
+                for name, count in await s.execute(
+                    select(Video.type_name, func.count(Video.id))
+                    .where(condition)
+                    .group_by(Video.type_name)
+                    .order_by(func.count(Video.id).desc())
+                    .limit(15)
+                )
+            ]
 
         console.print(
             f"屏蔽状态: {'开启' if settings.hide_adult else '关闭'}  "

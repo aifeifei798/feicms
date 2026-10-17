@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from .config import settings
-from .models import Base
+from .models import Base, utcnow
 
 IS_SQLITE = settings.database_url.startswith("sqlite")
+FTS_READY = False
 
 
 def _ensure_sqlite_dir(url: str) -> None:
@@ -98,6 +99,31 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_columns(conn)
         await _ensure_indexes(conn)
+        await _ensure_fts(conn)
+
+    # `videos.is_adult` is what the front site filters on; keep it in sync with
+    # the configured keyword lists (one scan, only when they changed).
+    from .adult import refresh_adult_flags
+
+    await refresh_adult_flags()
+
+
+async def analyze() -> None:
+    """Refresh planner statistics - cheap, and keeps LIMIT queries on the index."""
+    if not IS_SQLITE:
+        return
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(text("ANALYZE"))
+
+
+async def rebuild_fts() -> None:
+    """Rebuild the title search index from scratch (one pass over the library)."""
+    if not IS_SQLITE:
+        return
+    async with engine.begin() as conn:
+        await _ensure_fts(conn, force=True)
 
 
 async def _ensure_columns(conn) -> None:
@@ -106,14 +132,15 @@ async def _ensure_columns(conn) -> None:
         return
     from sqlalchemy import text
 
-    rows = (await conn.execute(text("PRAGMA table_info(sources)"))).fetchall()
-    existing = {row[1] for row in rows}
-    for column, ddl in (
-        ("origin", "TEXT NOT NULL DEFAULT 'manual'"),
-        ("subscription_url", "TEXT NOT NULL DEFAULT ''"),
+    for table, column, ddl in (
+        ("sources", "origin", "TEXT NOT NULL DEFAULT 'manual'"),
+        ("sources", "subscription_url", "TEXT NOT NULL DEFAULT ''"),
+        ("videos", "is_adult", "INTEGER NOT NULL DEFAULT 0"),
     ):
+        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+        existing = {row[1] for row in rows}
         if column not in existing:
-            await conn.execute(text(f"ALTER TABLE sources ADD COLUMN {column} {ddl}"))
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 async def _ensure_indexes(conn) -> None:
@@ -125,8 +152,75 @@ async def _ensure_indexes(conn) -> None:
     for name, columns in (
         ("ix_videos_type_updated", "type_name, last_updated"),
         ("ix_videos_year_updated", "year, last_updated"),
+        ("ix_videos_adult_updated", "is_adult, last_updated"),
+        ("ix_videos_adult_type_updated", "is_adult, type_name, last_updated"),
+        ("ix_videos_adult_source", "is_adult, source_count"),
     ):
         await conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON videos ({columns})"))
+
+
+async def _ensure_fts(conn, force: bool = False) -> None:
+    """Full-text index over titles, so title search is an index seek.
+
+    `name LIKE '%q%'` scans the whole library; the FTS5 trigram index answers the
+    same query in under a millisecond. Triggers keep it in sync, and only re-index
+    a row when the title actually changed, so collection stays cheap.
+    Queries shorter than 3 characters cannot use trigrams and fall back to LIKE.
+    """
+    global FTS_READY
+    if not IS_SQLITE:
+        FTS_READY = False
+        return
+    from sqlalchemy import text
+
+    try:
+        await conn.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5("
+                "name, content='videos', content_rowid='id', tokenize='trigram')"
+            )
+        )
+    except Exception:  # noqa: BLE001 - SQLite too old for the trigram tokenizer
+        FTS_READY = False
+        return
+
+    for trigger, body in (
+        (
+            "videos_fts_ai",
+            "AFTER INSERT ON videos BEGIN "
+            "INSERT INTO videos_fts(rowid, name) VALUES (new.id, new.name); END",
+        ),
+        (
+            "videos_fts_ad",
+            "AFTER DELETE ON videos BEGIN "
+            "INSERT INTO videos_fts(videos_fts, rowid, name) VALUES ('delete', old.id, old.name); END",
+        ),
+        (
+            "videos_fts_au",
+            "AFTER UPDATE ON videos WHEN old.name IS NOT new.name BEGIN "
+            "INSERT INTO videos_fts(videos_fts, rowid, name) VALUES ('delete', old.id, old.name); "
+            "INSERT INTO videos_fts(rowid, name) VALUES (new.id, new.name); END",
+        ),
+    ):
+        await conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger} {body}"))
+
+    # An external-content FTS table reads its rows from `videos`, so counting them
+    # says nothing about the inverted index. The settings row is the marker that
+    # the one-off build already happened; after that the triggers keep it in sync.
+    built = (
+        await conn.execute(text("SELECT value FROM settings WHERE key = 'fts_index_built'"))
+    ).scalar()
+    if built is None or force:
+        await conn.execute(text("INSERT INTO videos_fts(videos_fts) VALUES ('rebuild')"))
+        indexed = (await conn.execute(text("SELECT count(*) FROM videos"))).scalar()
+        await conn.execute(
+            text(
+                "INSERT INTO settings (key, value, updated_at) VALUES ('fts_index_built', :v, :t) "
+                "ON CONFLICT(key) DO UPDATE SET value = :v, updated_at = :t"
+            ),
+            {"v": str(indexed), "t": utcnow()},
+        )
+    FTS_READY = True
 
 
 async def dispose() -> None:

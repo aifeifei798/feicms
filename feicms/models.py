@@ -70,6 +70,11 @@ class Video(Base):
         # a composite index lets SQLite satisfy both without a separate sort.
         Index("ix_videos_type_updated", "type_name", "last_updated"),
         Index("ix_videos_year_updated", "year", "last_updated"),
+        # The front site always queries "not adult" + a sort, so the flag is
+        # part of the composite index and the filter becomes an index seek.
+        Index("ix_videos_adult_updated", "is_adult", "last_updated"),
+        Index("ix_videos_adult_type_updated", "is_adult", "type_name", "last_updated"),
+        Index("ix_videos_adult_source", "is_adult", "source_count"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -88,6 +93,9 @@ class Video(Base):
     remarks: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[int] = mapped_column(Integer, default=1)
     source_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Materialised result of the adult-keyword sweep. The keyword OR-of-LIKEs is a
+    # full table scan, so the front site filters on this indexed flag instead.
+    is_adult: Mapped[bool] = mapped_column(Boolean, default=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_updated: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 

@@ -344,6 +344,10 @@ async def upsert_page(
 
         if changed:
             video.last_updated = now
+            # A source that only now reports a category can change the verdict;
+            # the `Video.before_update` listener refreshes the indexed flag.
+            if not video.type_name and item.type_name:
+                video.type_name = item.type_name
             updated += 1
         else:
             skipped += 1

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from sqlalchemy import or_
+import hashlib
+import re
+
+from sqlalchemy import event, func, or_, select, text
 from sqlalchemy.sql.expression import ColumnElement
 
 from .config import settings
-from .models import Video
+from .models import Setting, Video
 
 # Upstream resource sites label adult material with recognisable category names
 # ("日本无码", "探花嫖娼", "麻豆传媒", "91视频", "糖心Vlog" ...). Categories are
@@ -73,5 +76,120 @@ def matched_keyword(video: Video) -> str | None:
     return None
 
 
+def matches_adult_keywords(name: str, type_name: str) -> bool:
+    """Keyword sweep on raw strings - used when a record is created/updated.
+
+    A single compiled alternation is used instead of 200 substring checks so the
+    collector stays cheap on a full sweep.
+    """
+    type_name = (type_name or "").lower()
+    if not type_name:
+        return True
+    return _type_pattern().search(type_name) is not None or _name_pattern().search(name) is not None
+
+
+def _keyword_pattern(keywords: tuple[str, ...]) -> re.Pattern:
+    keywords = sorted({k for k in keywords if k}, key=len, reverse=True)
+    if not keywords:
+        return re.compile(r"(?!)")  # never matches
+    return re.compile("|".join(re.escape(k) for k in keywords), re.IGNORECASE)
+
+
+_TYPE_PATTERN: dict[str, re.Pattern] = {}
+_NAME_PATTERN: dict[str, re.Pattern] = {}
+
+
+def _type_pattern() -> re.Pattern:
+    signature = keyword_signature()
+    pattern = _TYPE_PATTERN.get(signature)
+    if pattern is None:
+        pattern = _keyword_pattern(adult_type_keywords())
+        _TYPE_PATTERN[signature] = pattern
+    return pattern
+
+
+def _name_pattern() -> re.Pattern:
+    signature = keyword_signature()
+    pattern = _NAME_PATTERN.get(signature)
+    if pattern is None:
+        pattern = _keyword_pattern(adult_name_keywords())
+        _NAME_PATTERN[signature] = pattern
+    return pattern
+
+
 def is_adult(video: Video) -> bool:
     return matched_keyword(video) is not None
+
+
+def flag_condition() -> ColumnElement:
+    """Indexed condition for "this record is adult" - use this in queries.
+
+    `adult_condition()` is the keyword sweep (a full scan); `flag_condition()`
+    reads the materialised `videos.is_adult` column, which is indexed.
+    """
+    return Video.is_adult.is_(True)
+
+
+def hide_adult_condition(hide_adult: bool) -> ColumnElement | None:
+    return Video.is_adult.is_(False) if hide_adult else None
+
+
+def keyword_signature() -> str:
+    """Stable hash of the active keyword lists, used to know when a refresh is due."""
+    payload = ",".join(adult_type_keywords()) + "|" + ",".join(adult_name_keywords())
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _escape(keyword: str) -> str:
+    return keyword.replace("'", "''").replace("%", "").replace("_", "")
+
+
+@event.listens_for(Video, "before_insert")
+def _flag_on_insert(_mapper, _connection, video: Video) -> None:
+    """Keep the indexed flag in sync with the keyword lists on every write."""
+    video.is_adult = matches_adult_keywords(video.name, video.type_name)
+
+
+@event.listens_for(Video, "before_update")
+def _flag_on_update(_mapper, _connection, video: Video) -> None:
+    video.is_adult = matches_adult_keywords(video.name, video.type_name)
+
+
+def adult_sql_condition() -> str | None:
+    """Raw SQL for the keyword sweep, used only to (re)fill `videos.is_adult`."""
+    terms = [f"type_name LIKE '%{_escape(kw)}%'" for kw in adult_type_keywords()]
+    terms += [f"name LIKE '%{_escape(kw)}%'" for kw in adult_name_keywords()]
+    terms.append("type_name IS NULL")
+    terms.append("type_name = ''")
+    return "(" + " OR ".join(terms) + ")"
+
+
+async def refresh_adult_flags(force: bool = False) -> dict[str, object]:
+    """Materialise the keyword sweep into `videos.is_adult`.
+
+    The front site filters on the indexed flag; the 200-term OR of LIKEs cannot
+    use an index, so it is only ever run here - once at init, and again whenever
+    the keyword lists change.
+    """
+    from .db import session
+
+    signature = keyword_signature()
+    async with session() as s:
+        stored = await s.scalar(select(Setting).where(Setting.key == "adult_keyword_signature"))
+        if stored is not None and stored.value == signature and not force:
+            return {"refreshed": False, "adult": None}
+
+        condition = adult_sql_condition()
+        if condition is None:
+            await s.execute(text("UPDATE videos SET is_adult = 0"))
+        else:
+            await s.execute(
+                text(f"UPDATE videos SET is_adult = CASE WHEN {condition} THEN 1 ELSE 0 END")
+            )
+        adult = await s.scalar(select(func.count(Video.id)).where(Video.is_adult.is_(True)))
+        if stored is None:
+            s.add(Setting(key="adult_keyword_signature", value=signature))
+        else:
+            stored.value = signature
+        await s.commit()
+    return {"refreshed": True, "adult": adult or 0}
