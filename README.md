@@ -516,13 +516,38 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh refresh            # 后台定向补扫（按 vod_id 抓详情），日志 data/refresh.log
 ./server.sh refresh-status     # 补扫进度 + 待核对统计
 ./server.sh refresh-stop       # 停止补扫
+./server.sh refresh-stats      # 还有多少条待核对
+
+# 站点管理
+./server.sh sources --enabled-only      # 列出站点 + 健康状态
+./server.sh add "360资源站" "https://api.360zy.com/api.php/provide/vod"
+./server.sh seed --file sources.yaml    # 导入站点列表（幂等）
+./server.sh subscribe --add https://... # 源订阅：--add/--remove/--sync/--url
+
+# 数据维护（去重、清理、索引）
+./server.sh maintain                   # 一键维护：repair-plays + 去重预览 + reindex + compact-raw
+./server.sh maintain --apply           #  additionally 真正合并重复 + prune（这两个会删数据）
+./server.sh reindex                    # 重建标题搜索索引（FTS5）
+./server.sh merge-duplicates --dry-run # 同标题重复影片预览（去掉 --dry-run 才合并）
+./server.sh prune                      # 删除没有播放源的记录
+./server.sh repair-plays               # 用当前解析规则重建 plays（不联网）
+./server.sh compact-raw                # 清理冗余 raw play_url + VACUUM 收缩库
+./server.sh adult --show 20            # 前台成人过滤：看命中；--on/--off/--refresh
+./server.sh export --out backup.jsonl --limit 10000
+./server.sh doctor                     # 体检：服务状态 + 库统计 + 待补扫 + 站点健康 + 图片
+
 ./server.sh health
 ./server.sh images scan|download|stats|repair|prune
+./server.sh apikey create|list|revoke|update   # 长期 API key（脚本 / AI 客户端用）
+./server.sh mcp                        # stdio MCP server（给 Claude Desktop / OpenCode）
+./server.sh mcp-config --url http://127.0.0.1:8000/mcp
 ./server.sh passwd --user admin --password 你的密码    # 改 .env 里的账号
 ./server.sh token              # 打印一个 API token（curl 用）
 ./server.sh url                # 打印本机 + 局域网访问地址
 ./server.sh systemd            # 打印 systemd 服务配置（开机自启）
 ```
+
+`./server.sh` 不带参数（或 `./server.sh help`）会打印上面这份命令列表。
 
 脚本优先用 `uv`，没有 `uv` 时回退到 `.venv/bin/...`；端口和 host 从 `.env` 读取。
 

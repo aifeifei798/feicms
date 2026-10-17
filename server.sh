@@ -24,6 +24,23 @@
 #   ./server.sh refresh-stop     停止补扫
 #   ./server.sh refresh-stats    还有多少条待补扫
 #   ./server.sh health         探测所有站点
+#   ./server.sh sources [--enabled-only] [--limit N]   列出站点与健康状态
+#   ./server.sh add <name> <url> [--format auto] [--pages 5] [--tags 电影]
+#   ./server.sh seed [--file sources.yaml]   导入站点列表（幂等）
+#   ./server.sh subscribe [--add URL|--remove URL|--sync|--url URL]
+#   ./server.sh reindex        重建标题搜索索引（FTS5，一次性扫全库）
+#   ./server.sh merge-duplicates [--dry-run]   合并同标题的重复影片
+#   ./server.sh prune          删除没有播放源的记录 / 孤儿影片
+#   ./server.sh repair-plays   用当前解析规则重建 plays（不联网）
+#   ./server.sh compact-raw    清理冗余 raw play_url 并 VACUUM 收缩数据库
+#   ./server.sh adult [--on|--off|--refresh|--show N]   前台成人内容过滤
+#   ./server.sh export [--out backup.jsonl] [--limit N] [--q 关键词]
+#   ./server.sh apikey create|list|revoke|update        API key 管理
+#   ./server.sh mcp            以 stdio 方式跑 MCP server（给 AI 客户端）
+#   ./server.sh mcp-config [--url http://localhost:8000/mcp]
+#   ./server.sh maintain [--apply]   一键维护：repair-plays + 去重预览 + reindex + compact-raw
+#                                    （加 --apply 才真正合并重复与 prune，这两个会删数据）
+#   ./server.sh doctor         体检：服务状态 + 库统计 + 待补扫 + 站点健康 + 图片
 #   ./server.sh images scan|download|stats|repair|prune
 #   ./server.sh passwd [--user admin] [--password xxx]
 #   ./server.sh token          打印一个 API token（curl 用）
@@ -556,6 +573,61 @@ cmd_refresh_stop() {
   fi
 }
 
+cmd_maintain() {
+  load_env
+  local apply=0 a
+  for a in "$@"; do
+    case "$a" in
+      --apply|--yes) apply=1 ;;
+    esac
+  done
+
+  echo "== 重新解析播放源结构（不联网） =="
+  run_py feicms repair-plays
+
+  echo
+  echo "== 同标题重复影片预览 =="
+  run_py feicms merge-duplicates --dry-run
+
+  if [ "$apply" = 1 ]; then
+    echo
+    echo "== 合并重复影片 =="
+    run_py feicms merge-duplicates
+    echo
+    echo "== 删除没有播放源的记录 =="
+    run_py feicms prune
+  else
+    echo
+    echo "（默认不删数据。要真正合并重复 + 清理无播放源记录：./server.sh maintain --apply）"
+  fi
+
+  echo
+  echo "== 重建标题搜索索引 =="
+  run_py feicms reindex
+
+  echo
+  echo "== 清理冗余 raw 播放字段 + VACUUM =="
+  run_py feicms compact-raw
+}
+
+cmd_doctor() {
+  load_env
+  echo "== 服务状态 =="
+  cmd_status
+  echo
+  echo "== 数据库统计 =="
+  run_py feicms stats
+  echo
+  echo "== 定向补扫待核对 =="
+  run_py feicms refresh-stats
+  echo
+  echo "== 站点健康（前 15 个） =="
+  run_py feicms sources --limit 15
+  echo
+  echo "== 海报图片 =="
+  run_py feicms images stats
+}
+
 usage() {
   awk 'NR > 1 { if (substr($0, 1, 1) != "#") exit; print substr($0, 2) }' "$0"
 }
@@ -584,6 +656,22 @@ case "$command" in
   refresh-stats) run_py feicms refresh-stats ;;
   health) run_py feicms health ;;
   stats) run_py feicms stats ;;
+  doctor) cmd_doctor ;;
+  maintain) cmd_maintain "$@" ;;
+  sources) run_py feicms sources "$@" ;;
+  add) run_py feicms add "$@" ;;
+  seed) run_py feicms seed "$@" ;;
+  subscribe) run_py feicms subscribe "$@" ;;
+  reindex) run_py feicms reindex ;;
+  merge-duplicates) run_py feicms merge-duplicates "$@" ;;
+  prune) run_py feicms prune ;;
+  repair-plays) run_py feicms repair-plays ;;
+  compact-raw) run_py feicms compact-raw ;;
+  adult) run_py feicms adult "$@" ;;
+  export) run_py feicms export "$@" ;;
+  apikey) run_py feicms apikey "$@" ;;
+  mcp) run_py feicms mcp ;;
+  mcp-config) run_py feicms mcp-config "$@" ;;
   images) run_py feicms images "$@" ;;
   passwd) run_py feicms passwd "$@" ;;
   token) run_py feicms token ;;
