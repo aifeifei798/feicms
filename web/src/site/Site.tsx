@@ -100,6 +100,19 @@ export default function Site() {
     siteApi.filters().then(setFilters).catch(() => setFilters(null));
   }, []);
 
+  // Browser back/forward must drive the SPA route. Without this, pressing back
+  // on a phone only rewrites the URL and the next press leaves the site.
+  React.useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const state = e.state as Route | null;
+      const next =
+        state && typeof state === "object" && "view" in state ? state : parseRoute(window.location.pathname);
+      setRoute(next);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   // The nav dropdowns close on Esc or when clicking anywhere outside them.
   React.useEffect(() => {
     if (!menu) return;
@@ -186,6 +199,12 @@ export default function Site() {
             <small>影视资源库</small>
           </span>
         </a>
+
+        {route.view === "video" && (
+          <button type="button" className="detail-back" onClick={() => go({ view: "home" })}>
+            ← 返回
+          </button>
+        )}
 
         <div className="site-filters">
         <div className="site-menu">
@@ -374,8 +393,6 @@ export default function Site() {
         </main>
       ) : (
         <main className="site-main detail">
-          <button className="btn btn-sm btn-outline" onClick={() => go({ view: "home" })}>← 返回</button>
-
           {error && <div className="site-error">{error}</div>}
 
           {detail && (
