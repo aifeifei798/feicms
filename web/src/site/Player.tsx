@@ -16,6 +16,7 @@ export default function Player({ url, poster }: { url: string; poster?: string |
   const [error, setError] = React.useState<string | null>(null);
   const [needsGesture, setNeedsGesture] = React.useState(false);
   const [mutedStart, setMutedStart] = React.useState(false);
+  const [fullscreen, setFullscreen] = React.useState(false);
 
   React.useEffect(() => {
     const video = ref.current;
@@ -110,18 +111,13 @@ export default function Player({ url, poster }: { url: string; poster?: string |
   // stays out of the way and rotating the phone fills the screen. iOS Safari
   // only exposes fullscreen on <video> and uses the webkit-prefixed names, so
   // both are tried.
-  const toggleFullscreen = () => {
+  const isFullscreen = () =>
+    Boolean(document.fullscreenElement || (document as any).webkitIsFullScreen);
+
+  const enterFullscreen = () => {
+    if (isFullscreen()) return;
     const wrap = wrapRef.current;
     const video = ref.current;
-
-    if (document.fullscreenElement || (document as any).webkitIsFullScreen) {
-      if (document.exitFullscreen) {
-        document.exitFullscreen().catch(() => undefined);
-      } else if ((document as any).webkitExitFullscreen) {
-        (document as any).webkitExitFullscreen();
-      }
-      return;
-    }
 
     const request = (el: Element | null): Promise<void> | undefined => {
       if (!el) return undefined;
@@ -135,8 +131,66 @@ export default function Player({ url, poster }: { url: string; poster?: string |
     };
 
     const promise = request(wrap) || request(video);
-    if (promise) promise.catch(() => undefined);
+    if (promise) {
+      promise.catch(() => undefined);
+      return;
+    }
+    // iOS Safari: only the <video> itself can go fullscreen.
+    const native = (video as any)?.webkitEnterFullscreen;
+    if (native) native.call(video);
   };
+
+  const exitFullscreen = () => {
+    const video = ref.current;
+    if (isFullscreen()) {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => undefined);
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+      return;
+    }
+    // iOS Safari fullscreen on <video> is invisible to the document, so ask the
+    // player itself. Calling it when nothing is fullscreen is a harmless no-op.
+    const native = (video as any)?.webkitExitFullscreen;
+    if (native) native.call(video);
+  };
+
+  const toggleFullscreen = () => {
+    if (isFullscreen()) exitFullscreen();
+    else enterFullscreen();
+  };
+
+  // Keep the button label in sync with whatever the browser actually did,
+  // including the native "exit" the user finds on their own.
+  React.useEffect(() => {
+    const sync = () => setFullscreen(isFullscreen());
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
+
+  // On a phone, turning sideways is the natural way to watch: the player takes
+  // the whole screen by itself, and rotating back to portrait restores the
+  // normal page. Only the transition is acted on, so a manual exit while still
+  // sideways is respected until the phone is turned again.
+  React.useEffect(() => {
+    // Height, not width: a rotated phone is short (≈350-480px) whatever its
+    // resolution, while a desktop window or a tablet stays taller.
+    const media = window.matchMedia("(orientation: landscape) and (max-height: 480px)");
+
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) enterFullscreen();
+      else exitFullscreen();
+    };
+
+    media.addEventListener("change", onChange);
+    if (media.matches) enterFullscreen();
+    return () => media.removeEventListener("change", onChange);
+  }, []);
 
   return (
     <div className="player-wrap" ref={wrapRef}>
@@ -161,8 +215,13 @@ export default function Player({ url, poster }: { url: string; poster?: string |
           静音播放中，点击开启声音
         </button>
       )}
-      <button type="button" className="player-fullscreen" onClick={toggleFullscreen} aria-label="全屏">
-        全屏
+      <button
+        type="button"
+        className="player-fullscreen"
+        onClick={toggleFullscreen}
+        aria-label={fullscreen ? "退出全屏" : "全屏"}
+      >
+        {fullscreen ? "退出全屏" : "全屏"}
       </button>
       {error && !needsGesture && (
         <div className="player-error">

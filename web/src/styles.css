@@ -990,9 +990,12 @@ body {
   height: 100vh;
   max-height: none;
 }
+/* In fullscreen the button becomes the only way out on a phone (there is no
+   Esc key), so it stays visible and reads as "exit fullscreen". */
 .player-wrap:fullscreen .player-fullscreen,
 .player-wrap:-webkit-full-screen .player-fullscreen {
-  display: none;
+  background: rgba(8, 12, 18, 0.85);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .episode-list {
@@ -1064,7 +1067,10 @@ body {
   }
 }
 
-@media (max-width: 900px) and (orientation: landscape) {
+/* Rotated phones: compact two-column detail layout. The second clause catches
+   large phones whose landscape width is above 900px. */
+@media (max-width: 900px) and (orientation: landscape),
+  (orientation: landscape) and (max-height: 480px) {
   .site-header {
     padding: 0.45rem 0.8rem;
   }
