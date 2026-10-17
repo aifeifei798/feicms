@@ -1147,8 +1147,26 @@ body {
     font-size: 0.85rem;
   }
   .poster-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.7rem;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6rem;
+  }
+  /* Three posters per row on a phone: keep the caption tight so the cards
+     stay readable at ~110px wide. */
+  .poster-name {
+    font-size: 0.78rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .poster-sub {
+    font-size: 0.62rem;
+  }
+  .poster-remarks {
+    display: none;
+  }
+  .poster-meta {
+    padding: 0.35rem 0.45rem;
   }
   .page-num,
   .page-arrow {
