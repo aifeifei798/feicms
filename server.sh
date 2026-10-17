@@ -18,6 +18,11 @@
 #   ./server.sh full-status    实时进度 + 断点（读 data/collect_status.json）
 #   ./server.sh full-stop      停止后台全量扫描（断点保留）
 #   ./server.sh resume [--clear] [--detail]  查看 / 清除断点续传记录
+#   ./server.sh refresh [--days N] [--limit N] [--name 站点] [--dry-run]
+#                        后台定向补扫：按 vod_id 抓详情，刷新增量采集扫不到的老记录
+#   ./server.sh refresh-status   补扫进度（读 data/refresh.log）
+#   ./server.sh refresh-stop     停止补扫
+#   ./server.sh refresh-stats    还有多少条待补扫
 #   ./server.sh health         探测所有站点
 #   ./server.sh images scan|download|stats|repair|prune
 #   ./server.sh passwd [--user admin] [--password xxx]
@@ -35,6 +40,8 @@ COLLECT_PID="$ROOT/data/collect.pid"
 COLLECT_LOCK="$ROOT/data/collect.lock"
 COLLECT_STATUS="$ROOT/data/collect_status.json"
 COLLECT_RESUME="$ROOT/data/collect_resume.json"
+REFRESH_LOG="$ROOT/data/refresh.log"
+REFRESH_PID="$ROOT/data/refresh.pid"
 
 load_env() {
   if [ -f "$ROOT/.env" ]; then
@@ -479,6 +486,76 @@ except Exception:
   fi
 }
 
+cmd_refresh() {
+  load_env
+  if [ -f "$REFRESH_PID" ] && kill -0 "$(cat "$REFRESH_PID")" 2>/dev/null; then
+    echo "补扫已在运行 (pid $(cat "$REFRESH_PID"))，看进度: ./server.sh refresh-status"
+    return 0
+  fi
+  if lock_held_by_live; then
+    echo "另一轮采集正在进行：$(cat "$COLLECT_LOCK")"
+    echo "补扫与采集共用采集锁，这一轮结束后再跑（后台扫描可用 ./server.sh full-stop 停掉）"
+    return 0
+  fi
+
+  local cmd args="" a
+  cmd="$(py_cmd)"
+  if [ -z "$cmd" ]; then
+    echo "未找到 uv，也没有 .venv。先运行 ./install.sh"
+    exit 1
+  fi
+  for a in "$@"; do
+    args="$args $(printf '%q' "$a")"
+  done
+
+  : > "$REFRESH_LOG"
+  if command -v setsid >/dev/null 2>&1; then
+    PYTHONUNBUFFERED=1 setsid nohup bash -c "$cmd refresh$args" >> "$REFRESH_LOG" 2>&1 &
+  else
+    PYTHONUNBUFFERED=1 nohup bash -c "$cmd refresh$args" >> "$REFRESH_LOG" 2>&1 &
+  fi
+  echo $! > "$REFRESH_PID"
+  echo "定向补扫已启动 (pid $!)，日志: $REFRESH_LOG"
+  echo "看进度: ./server.sh refresh-status   或 tail -f $REFRESH_LOG"
+  echo "停止:   ./server.sh refresh-stop"
+}
+
+cmd_refresh_status() {
+  load_env
+  if [ -f "$REFRESH_PID" ]; then
+    pid="$(cat "$REFRESH_PID")"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "补扫进程运行中 (pid $pid)"
+    else
+      echo "补扫进程已退出 (pid $pid)"
+    fi
+  else
+    echo "没有记录到补扫进程"
+  fi
+  if [ -f "$REFRESH_LOG" ]; then
+    echo "最近进度（$REFRESH_LOG）："
+    tail -12 "$REFRESH_LOG"
+  fi
+  run_py feicms refresh-stats
+}
+
+cmd_refresh_stop() {
+  if [ -f "$REFRESH_PID" ]; then
+    pid="$(cat "$REFRESH_PID")"
+    if kill -0 "$pid" 2>/dev/null; then
+      if command -v setsid >/dev/null 2>&1; then
+        kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      else
+        kill -TERM "$pid" 2>/dev/null
+      fi
+      echo "已停止补扫 (pid $pid)"
+    else
+      echo "补扫进程已退出"
+    fi
+    rm -f "$REFRESH_PID"
+  fi
+}
+
 usage() {
   awk 'NR > 1 { if (substr($0, 1, 1) != "#") exit; print substr($0, 2) }' "$0"
 }
@@ -501,6 +578,10 @@ case "$command" in
   full-status) cmd_full_status ;;
   full-stop) cmd_full_stop ;;
   resume) run_py feicms resume "$@" ;;
+  refresh) cmd_refresh "$@" ;;
+  refresh-status) cmd_refresh_status ;;
+  refresh-stop) cmd_refresh_stop ;;
+  refresh-stats) run_py feicms refresh-stats ;;
   health) run_py feicms health ;;
   stats) run_py feicms stats ;;
   images) run_py feicms images "$@" ;;

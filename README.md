@@ -212,6 +212,18 @@ feicms refresh-stats                    # 还有多少条待核对
 - 上游已经删掉的记录会被统计为 `gone`，不会写库。
 - 补扫与采集共用 `data/collect.lock`，全量扫描期间补扫自动跳过，反之亦然。
 - 面板「采集」页面有「定向补扫」卡片（可设天数与条数，也有「预览（不写库）」），接口是 `POST /api/refresh` + `GET /api/refresh/progress` + `GET /api/refresh/stats`。
+- 不想开网页，用 `server.sh`（和 `full` 一样是后台跑，SSH 断开也继续）：
+
+```bash
+./server.sh refresh                       # 后台补扫，日志 data/refresh.log
+./server.sh refresh --limit 20000        # 本轮核对 2 万条
+./server.sh refresh --name "360资源站" --limit 500
+./server.sh refresh --dry-run            # 只统计，不写库
+./server.sh refresh-status               # 进程状态 + 最近进度 + 待核对统计
+./server.sh refresh-stop                 # 停止
+./server.sh refresh-stats                # 还有多少条待核对
+```
+
 - 想让服务定期自己补扫：`.env` 设 `FEICMS_AUTO_REFRESH=true`（默认 `false`），间隔 `FEICMS_REFRESH_INTERVAL`（默认 720 分钟 = 12 小时），面板「配置 → 自动任务」里也有开关。
 
 数据模型：
@@ -501,6 +513,9 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh full-status        # 实时进度 + 断点（读 data/collect_status.json）
 ./server.sh full-stop          # 停止后台扫描（断点保留）
 ./server.sh resume --detail    # 查看断点记录（--clear 清除）
+./server.sh refresh            # 后台定向补扫（按 vod_id 抓详情），日志 data/refresh.log
+./server.sh refresh-status     # 补扫进度 + 待核对统计
+./server.sh refresh-stop       # 停止补扫
 ./server.sh health
 ./server.sh images scan|download|stats|repair|prune
 ./server.sh passwd --user admin --password 你的密码    # 改 .env 里的账号
