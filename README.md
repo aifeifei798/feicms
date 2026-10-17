@@ -174,8 +174,6 @@ GET  /api/sources/export?fmt=yaml|json|csv
 
 想让服务自己慢慢扫（不需要 `./server.sh full`），在 `.env` 里设 `FEICMS_AUTO_COLLECT_FULL=true`，或在面板「配置 → 自动任务」里打开「自动全量采集」：每轮定时采集都会走每个站点的全部页数。
 
-想让服务自己慢慢扫（不需要 `./server.sh full`），在 `.env` 里设 `FEICMS_AUTO_COLLECT_FULL=true`，或在面板「配置 → 自动任务」里打开「自动全量采集」：每轮定时采集都会走每个站点的全部页数。
-
 如果 `full-status` 里页数一直是 0，说明该网络到这些站点不通，先跑 `./server.sh health` 看哪些站点可达。
 
 「采集」页面（侧栏 数据 → 采集）是采集的唯一入口：总进度条 + 每个站点一行，状态（采集中 / 待采集 / 完成 / 失败）、进度条（已采页数 / 本次计划页数）、新增 / 更新 / 跳过 / 耗时，每行还有「采集」「全量」按钮可以只跑这一个站点。排序是采集中 → 待采集 → 完成 → 失败，本轮没参与的站点沉到底部并标注「未采集」，已禁用的站点显示「已禁用」且采集按钮不可用。失败站点只显示「失败」徽章，不列出错误文本（原始错误仍写入 `collect_jobs` 表，`GET /api/jobs` 可以查），工具栏的「重试失败的 N 个」只重跑这些站点。
@@ -185,6 +183,36 @@ GET  /api/sources/export?fmt=yaml|json|csv
 资源站列表按健康状态排序：`ok` → `slow` → 未检查 → `dead` → 已禁用，同组内再按 priority 降序。所以跑一轮健康检查后，不可用的站点会自动沉到列表底部（面板「资源站 → 健康检查」和 `feicms sources` 都是这个顺序）。
 
 同一影片在不同站点标题略有差异（例如带年份 `月亮求抱抱|2026`），旧数据里可能被拆成两条 `videos`。`feicms merge-duplicates`（或面板「配置 → 数据维护 → 合并重复影片」）会把标题归一化后合并成一条：重复行的采集记录（含全部播放源）迁移到最完整的那条，海报索引重新指向，旧 `signature` 重键，重复行删除。`--dry-run` / `?dry_run=true` 只统计并给出示例，不改动数据。
+
+### 定向补扫：名字没变、播放源变了的老片子
+
+日常增量采集只走每个站点的前 `FEICMS_PAGES` 页（上游按 `vod_time` 倒序排列，前几页只有刚更新过的片子）。于是有一类记录永远扫不到：**标题没变、上游换了播放源**的老片子——它躺在第几百页，`last_updated` 停留在上次全量扫描那天。库里几十万条，跑一轮全量（约 32 万页）代价太大。
+
+`feicms refresh` 解决这件事：绝大多数资源站支持 `ac=detail&ids=<vod_id>`，所以可以**按 id 直接抓详情**，只核对需要的那几条：
+
+```bash
+feicms refresh                          # 最老的 5000 条（FEICMS_REFRESH_LIMIT）
+feicms refresh --days 60 --limit 20000 # 超过 60 天没核对的，取 2 万条
+feicms refresh --name "360资源站" --limit 500
+feicms refresh --dry-run                # 只统计，不写库
+feicms refresh-stats                    # 还有多少条待核对
+```
+
+选哪些条（`source_items.last_checked_at` 记录每条最后一次核对时间）：
+
+1. 从来没核对过的；
+2. 上次核对超过 `FEICMS_REFRESH_DAYS`（默认 30 天）的；
+3. 播放源已经为空的（`plays` 为 `""` 或 `[]`）。
+
+按影片 `last_updated` 最老的优先。核对过的记录（哪怕上游没变化）也会写 `last_checked_at`，所以下一轮会自动挪到下一批最老的，不会反复抓同一批。
+
+几个细节：
+
+- 有些站（例如 `155资源站`）只回答 `ids=` 里的第一个 id。补扫先探测一次，发现后自动降级成**逐条**抓取（进度里显示 `mode=single`）。
+- 上游已经删掉的记录会被统计为 `gone`，不会写库。
+- 补扫与采集共用 `data/collect.lock`，全量扫描期间补扫自动跳过，反之亦然。
+- 面板「采集」页面有「定向补扫」卡片（可设天数与条数，也有「预览（不写库）」），接口是 `POST /api/refresh` + `GET /api/refresh/progress` + `GET /api/refresh/stats`。
+- 想让服务定期自己补扫：`.env` 设 `FEICMS_AUTO_REFRESH=true`（默认 `false`），间隔 `FEICMS_REFRESH_INTERVAL`（默认 720 分钟 = 12 小时），面板「配置 → 自动任务」里也有开关。
 
 数据模型：
 
@@ -217,6 +245,8 @@ feicms repair-plays                # 用当前解析规则重建播放源结构 
 feicms merge-duplicates [--dry-run] # 合并同标题的重复影片（旧 signature 带年份造成的拆分）
 feicms adult [--on|--off|--show 15] # 前台成人内容过滤：命中统计 / 开关（写 .env）
 feicms reindex                     # 重建标题搜索索引（FTS5，一次性扫全库）
+feicms refresh [--days 30 --limit 5000 --name 站点 --dry-run] # 定向补扫：按 vod_id 抓详情，刷新增量采集扫不到的老记录
+feicms refresh-stats               # 还有多少条待补扫（未核对 / 超期 / 播放源为空）
 feicms export [--out backup.jsonl]
 
 feicms images scan                 # 登记所有 pic 字段（不联网）
@@ -426,6 +456,11 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 | `FEICMS_AUTO_COLLECT` | true | 后台定时采集 |
 | `FEICMS_AUTO_COLLECT_FULL` | false | 定时采集走每个站点的全部页数（把 `./server.sh full` 挂在服务里） |
 | `FEICMS_COLLECT_INTERVAL` | 60 | 采集间隔（分钟） |
+| `FEICMS_AUTO_REFRESH` | false | 后台定期定向补扫：按 vod_id 抓详情，刷新增量采集扫不到的老记录 |
+| `FEICMS_REFRESH_INTERVAL` | 720 | 补扫间隔（分钟） |
+| `FEICMS_REFRESH_DAYS` | 30 | 超过多少天没核对算「陈旧」 |
+| `FEICMS_REFRESH_LIMIT` | 5000 | 每轮最多核对多少条 |
+| `FEICMS_REFRESH_BATCH` | 20 | 每次 `ac=detail&ids=` 批量抓多少条 |
 | `FEICMS_HEALTH_INTERVAL` | 30 | 健康检查间隔（分钟） |
 | `FEICMS_HEALTH_THRESHOLD` | 3 | 连续失败几次后自动禁用 |
 | `FEICMS_IMAGE_DIR` | `data/images` | 图片目录 |

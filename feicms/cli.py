@@ -23,6 +23,7 @@ from .collector import (
 )
 from .db import init_db, rebuild_fts, session
 from .health import health_check_all, health_rank
+from .refresh import pick_refresh_targets, refresh_stale, refresh_summary
 from .adult import adult_condition, adult_name_keywords, adult_type_keywords, matched_keyword
 from .models import Source, Subscription, Video, SourceItem
 from .seed import load_sources
@@ -383,6 +384,118 @@ def collect(
                 "[yellow]本轮没跑完[/yellow]（断点已保存，直接再跑一次会自动续传；"
                 "想从头开始加 --no-resume）"
             )
+
+    asyncio.run(_run())
+
+
+@app.command("refresh")
+def refresh_cmd(
+    days: int = typer.Option(
+        None, "--days", help="超过多少天没核对的记录才补扫（默认 FEICMS_REFRESH_DAYS）"
+    ),
+    limit: int = typer.Option(
+        None, "--limit", help="本轮最多核对多少条记录（默认 FEICMS_REFRESH_LIMIT）"
+    ),
+    name: str = typer.Option(None, "--name", help="只补扫某一个站点"),
+    batch: int = typer.Option(
+        None, "--batch", help="每次 ids 查询带多少个 vod_id（默认 FEICMS_REFRESH_BATCH）"
+    ),
+    concurrency: int = typer.Option(
+        None, "--concurrency", help="同时补扫的站点数（0 = 全部站点同时）"
+    ),
+    delay: float = typer.Option(None, "--delay", help="每批之间的间隔秒数"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只统计要补扫多少条，不写库"),
+    include_disabled: bool = typer.Option(False, "--include-disabled"),
+    heartbeat: int = typer.Option(5, "--heartbeat", help="每 N 批打印一次进度（0 = 关闭）"),
+) -> None:
+    """定向补扫：按 vod_id 直接抓详情，刷新普通采集扫不到的老记录。
+
+    普通采集只走每个站的前 FEICMS_PAGES 页，名字没变但播放源变了的老片子躺在几百页
+    之后，永远扫不到。这里用 `ac=detail&ids=<vod_id>` 只抓需要核对的那几条。
+    """
+
+    async def _run() -> None:
+        await init_db()
+        targets = await pick_refresh_targets(
+            days=days if days is not None else settings.refresh_days,
+            limit=limit if limit is not None else settings.refresh_limit,
+            names=[name] if name else None,
+            only_enabled=not include_disabled,
+        )
+        total = sum(len(ids) for ids in targets.values())
+        if not total:
+            console.print("[green]没有需要补扫的记录[/green]")
+            return
+        console.print(
+            f"[cyan]定向补扫[/cyan] {total} 条记录，{len(targets)} 个站点，"
+            f"每批 {batch or settings.refresh_batch} 个 id"
+        )
+
+        def on_progress(source_id: int, snap: dict[str, Any]) -> None:
+            if heartbeat and snap.get("batches", 0) % heartbeat == 0:
+                console.print(
+                    f"[dim]  {source_id}: 已抓 {snap.get('fetched', 0)} 条，"
+                    f"更新 {snap.get('updated', 0)}，新增 {snap.get('inserted', 0)}，"
+                    f"上游已删 {snap.get('gone', 0)}[/dim]"
+                )
+
+        results = await refresh_stale(
+            days=days,
+            limit=limit,
+            names=[name] if name else None,
+            batch=batch,
+            concurrency=concurrency,
+            delay=delay,
+            dry_run=dry_run,
+            only_enabled=not include_disabled,
+            on_progress=on_progress,
+        )
+        if not results:
+            console.print("[yellow]另一轮采集正在进行中，本轮未启动。[/yellow]")
+            return
+
+        table = Table(title="定向补扫结果")
+        table.add_column("站点")
+        table.add_column("请求", justify="right")
+        table.add_column("抓到", justify="right")
+        table.add_column("更新", justify="right")
+        table.add_column("新增", justify="right")
+        table.add_column("上游已删", justify="right")
+        table.add_column("耗时", justify="right")
+        for r in results:
+            table.add_row(
+                r.source_name,
+                str(r.requested),
+                str(r.fetched),
+                str(r.updated),
+                str(r.inserted),
+                str(r.gone),
+                f"{r.elapsed_ms / 1000:.1f}s",
+            )
+        console.print(table)
+        unsupported = [r.source_name for r in results if r.unsupported]
+        if unsupported:
+            console.print(
+                f"[yellow]这些站点不支持按 id 抓取：{', '.join(unsupported)}[/yellow]"
+            )
+        console.print(
+            f"[green]完成[/green] 核对 {sum(r.requested for r in results)} 条，"
+            f"更新 {sum(r.updated for r in results)}，新增 {sum(r.inserted for r in results)}，"
+            f"上游已删 {sum(r.gone for r in results)}"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command("refresh-stats")
+def refresh_stats_cmd() -> None:
+    """定向补扫的进度：还有多少记录没核对过。"""
+
+    async def _run() -> None:
+        await init_db()
+        info = await refresh_summary()
+        for key, value in info.items():
+            console.print(f"  {key}: {value}")
 
     asyncio.run(_run())
 

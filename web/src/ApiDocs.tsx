@@ -251,6 +251,27 @@ const GROUPS: Group[] = [
       },
       {
         method: "POST",
+        path: "/api/refresh",
+        summary: "定向补扫：按 vod_id 用 ac=detail&ids= 直接抓详情，只核对最老的 / 超过 FEICMS_REFRESH_DAYS 天没核对 / 播放源为空的那部分记录。后台运行，立即返回进度快照；采集正在运行时返回 409",
+        body: `{ "days": 30, "limit": 5000, "names": ["360资源站"], "batch": 20, "dry_run": false }`,
+        example: "curl -X POST http://127.0.0.1:8000/api/refresh -H 'Content-Type: application/json' -d '{\"limit\": 1000}'",
+      },
+      {
+        method: "GET",
+        path: "/api/refresh/progress",
+        summary: "补扫进度：running / checked / fetched / updated / inserted / gone / sources / unsupported_sources / started_at / finished_at",
+        example: "curl http://127.0.0.1:8000/api/refresh/progress",
+        tryable: true,
+      },
+      {
+        method: "GET",
+        path: "/api/refresh/stats",
+        summary: "还有多少记录需要补扫：source_items、never_checked、overdue（超过 refresh_days 未核对）、empty_plays（播放源为空）、oldest_video_updated_at",
+        example: "curl http://127.0.0.1:8000/api/refresh/stats",
+        tryable: true,
+      },
+      {
+        method: "POST",
         path: "/api/health-check",
         summary: "对所有源做一次连通性 + 数据解析检查，先重新启用所有被禁用的源（reenable=true 时）再去探活，写回 health_status / latency_ms",
         params: [{ name: "only_enabled", type: "bool", default: "true", note: "false 时也检查禁用源" }],

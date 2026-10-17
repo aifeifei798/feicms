@@ -118,6 +118,17 @@ class CollectRequest(BaseModel):
     resume: Optional[bool] = None
 
 
+class RefreshRequest(BaseModel):
+    """Targeted re-check of records a normal sweep never reaches."""
+
+    names: Optional[list[str]] = None
+    # Records not re-checked for this many days. None = FEICMS_REFRESH_DAYS.
+    days: Optional[int] = Field(None, ge=0, le=3650)
+    limit: Optional[int] = Field(None, ge=0, le=200000)
+    batch: Optional[int] = Field(None, ge=1, le=100)
+    dry_run: bool = False
+
+
 class EnableRequest(BaseModel):
     enabled: bool = True
 
@@ -137,6 +148,8 @@ class SchedulerUpdate(BaseModel):
     collect_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
     health_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
     image_interval_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    auto_refresh: Optional[bool] = None
+    refresh_interval_minutes: Optional[int] = Field(None, ge=1, le=10080)
 
 
 class AdminPasswordRequest(BaseModel):

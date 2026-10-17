@@ -37,7 +37,7 @@ export default function Settings({ notify }: { notify: Notify }) {
   const [busy, setBusy] = React.useState(false);
   const [mergePreview, setMergePreview] = React.useState<MergeResult | null>(null);
   const [scheduler, setScheduler] = React.useState<SchedulerState | null>(null);
-  const [intervals, setIntervals] = React.useState({ collect: "", health: "", image: "" });
+  const [intervals, setIntervals] = React.useState({ collect: "", health: "", image: "", refresh: "" });
   const [adminUser, setAdminUser] = React.useState("");
   const [adminPassword, setAdminPassword] = React.useState("");
   const [token, setToken] = React.useState("");
@@ -62,6 +62,7 @@ export default function Settings({ notify }: { notify: Notify }) {
           collect: String(s.collect_interval_minutes),
           health: String(s.health_interval_minutes),
           image: String(s.image_interval_minutes),
+          refresh: String(s.refresh_interval_minutes),
         });
       })
       .catch((e) => notify((e as Error).message, "error"));
@@ -74,6 +75,7 @@ export default function Settings({ notify }: { notify: Notify }) {
       if (intervals.collect) body.collect_interval_minutes = Number(intervals.collect);
       if (intervals.health) body.health_interval_minutes = Number(intervals.health);
       if (intervals.image) body.image_interval_minutes = Number(intervals.image);
+      if (intervals.refresh) body.refresh_interval_minutes = Number(intervals.refresh);
       const s = await api.setScheduler(body);
       setScheduler(s);
       notify("自动任务间隔已更新（立即生效）");
@@ -84,12 +86,20 @@ export default function Settings({ notify }: { notify: Notify }) {
     }
   };
 
-  const toggleScheduler = async (key: "auto_collect" | "auto_collect_full" | "auto_images") => {
+  const toggleScheduler = async (
+    key: "auto_collect" | "auto_collect_full" | "auto_images" | "auto_refresh"
+  ) => {
     try {
       const s = await api.setScheduler({ [key]: !scheduler?.[key] });
       setScheduler(s);
       const label =
-        key === "auto_collect" ? "自动采集" : key === "auto_collect_full" ? "自动全量采集" : "自动海报下载";
+        key === "auto_collect"
+          ? "自动采集"
+          : key === "auto_collect_full"
+          ? "自动全量采集"
+          : key === "auto_images"
+          ? "自动海报下载"
+          : "定向补扫";
       notify(`${label} ${s[key] ? "已开启" : "已关闭"}`);
     } catch (e) {
       notify((e as Error).message, "error");
@@ -236,6 +246,11 @@ export default function Settings({ notify }: { notify: Notify }) {
                     <tr><td>FEICMS_RETRIES</td><td>{config.max_retries}</td></tr>
                     <tr><td>FEICMS_AUTO_COLLECT</td><td>{config.auto_collect ? "true" : "false"}</td></tr>
                     <tr><td>FEICMS_AUTO_COLLECT_FULL</td><td>{config.auto_collect_full ? "true（每轮走全部页数）" : "false"}</td></tr>
+                    <tr><td>FEICMS_AUTO_REFRESH</td><td>{config.auto_refresh ? "true（定期定向补扫）" : "false"}</td></tr>
+                    <tr><td>FEICMS_REFRESH_INTERVAL</td><td>{config.refresh_interval_minutes} 分钟</td></tr>
+                    <tr><td>FEICMS_REFRESH_DAYS</td><td>{config.refresh_days} 天未核对即视为陈旧</td></tr>
+                    <tr><td>FEICMS_REFRESH_LIMIT</td><td>每轮最多核对 {config.refresh_limit} 条</td></tr>
+                    <tr><td>FEICMS_REFRESH_BATCH</td><td>每次按 id 批量抓 {config.refresh_batch} 条</td></tr>
                     <tr><td>FEICMS_COLLECT_INTERVAL</td><td>{config.collect_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_HEALTH_INTERVAL</td><td>{config.health_interval_minutes} 分钟</td></tr>
                     <tr><td>FEICMS_HEALTH_THRESHOLD</td><td>{config.health_fail_threshold}</td></tr>
@@ -397,7 +412,20 @@ export default function Settings({ notify }: { notify: Notify }) {
               >
                 自动海报 {scheduler?.auto_images ? "已开启" : "已关闭"}
               </button>
+              <button
+                className={`btn btn-sm ${scheduler?.auto_refresh ? "btn-primary" : "btn-outline"}`}
+                onClick={() => toggleScheduler("auto_refresh")}
+                disabled={busy}
+              >
+                自动定向补扫 {scheduler?.auto_refresh ? "已开启" : "已关闭"}
+              </button>
               {scheduler?.collect_running && <span className="badge badge-primary">采集进行中</span>}
+              {scheduler?.last_refresh_at && (
+                <span className="muted">
+                  上次补扫 {new Date(scheduler.last_refresh_at).toLocaleString()}：
+                  核对 {scheduler.last_refresh_result?.checked ?? 0} 条，更新 {scheduler.last_refresh_result?.updated ?? 0} 条
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap gap-2 mt-2">
               <label className="label mr-2">
@@ -411,6 +439,10 @@ export default function Settings({ notify }: { notify: Notify }) {
               <label className="label mr-2">
                 <span className="muted">海报间隔</span>
                 <input className="input input-bordered input-sm" value={intervals.image} onChange={(e) => setIntervals({ ...intervals, image: e.target.value })} />
+              </label>
+              <label className="label mr-2">
+                <span className="muted">补扫间隔</span>
+                <input className="input input-bordered input-sm" value={intervals.refresh} onChange={(e) => setIntervals({ ...intervals, refresh: e.target.value })} />
               </label>
               <button className="btn btn-sm btn-outline" onClick={saveScheduler} disabled={busy}>
                 保存间隔

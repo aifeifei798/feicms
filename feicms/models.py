@@ -112,6 +112,8 @@ class SourceItem(Base):
         UniqueConstraint("source_id", "source_vod_id", name="uq_source_vod"),
         Index("ix_items_video", "video_id"),
         Index("ix_items_updated", "updated_at"),
+        # The targeted refresh (`feicms refresh`) picks its work off this column.
+        Index("ix_items_checked", "last_checked_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -136,6 +138,12 @@ class SourceItem(Base):
     play_url: Mapped[str] = mapped_column(Text, default="")
     # parsed: [{"from": "example", "episodes": [{"name": "第01集", "url": "https://..."}]}]
     plays: Mapped[str] = mapped_column(Text, default="[]")
+
+    # When this record was last re-verified directly against its source. A normal
+    # sweep only walks the first FEICMS_PAGES pages, so a title that never moves to
+    # the top of the list keeps whatever play sources the last full sweep saw; the
+    # targeted refresh uses this column to decide what still needs checking.
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

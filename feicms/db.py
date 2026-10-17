@@ -136,6 +136,7 @@ async def _ensure_columns(conn) -> None:
         ("sources", "origin", "TEXT NOT NULL DEFAULT 'manual'"),
         ("sources", "subscription_url", "TEXT NOT NULL DEFAULT ''"),
         ("videos", "is_adult", "INTEGER NOT NULL DEFAULT 0"),
+        ("source_items", "last_checked_at", "TEXT"),
     ):
         rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
         existing = {row[1] for row in rows}
@@ -149,14 +150,17 @@ async def _ensure_indexes(conn) -> None:
         return
     from sqlalchemy import text
 
-    for name, columns in (
-        ("ix_videos_type_updated", "type_name, last_updated"),
-        ("ix_videos_year_updated", "year, last_updated"),
-        ("ix_videos_adult_updated", "is_adult, last_updated"),
-        ("ix_videos_adult_type_updated", "is_adult, type_name, last_updated"),
-        ("ix_videos_adult_source", "is_adult, source_count"),
+    for table, name, columns in (
+        ("videos", "ix_videos_type_updated", "type_name, last_updated"),
+        ("videos", "ix_videos_year_updated", "year, last_updated"),
+        ("videos", "ix_videos_adult_updated", "is_adult, last_updated"),
+        ("videos", "ix_videos_adult_type_updated", "is_adult, type_name, last_updated"),
+        ("videos", "ix_videos_adult_source", "is_adult, source_count"),
+        ("source_items", "ix_items_checked", "last_checked_at"),
     ):
-        await conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON videos ({columns})"))
+        await conn.execute(
+            text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})")
+        )
 
 
 async def _ensure_fts(conn, force: bool = False) -> None:

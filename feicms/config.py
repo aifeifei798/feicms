@@ -106,6 +106,13 @@ class Settings:
     # sweeping in the background without anyone opening the panel.
     auto_collect_full: bool = _env_bool("FEICMS_AUTO_COLLECT_FULL", False)
     collect_interval_minutes: int = _env_int("FEICMS_COLLECT_INTERVAL", 60)
+    # 定向补扫: records that a normal sweep never reaches (they sit deep in the
+    # source's list) are re-fetched one by one with `ac=detail&ids=<vod_id>`.
+    refresh_days: int = _env_int("FEICMS_REFRESH_DAYS", 30)
+    refresh_limit: int = _env_int("FEICMS_REFRESH_LIMIT", 5000)
+    refresh_batch: int = _env_int("FEICMS_REFRESH_BATCH", 20)
+    auto_refresh: bool = _env_bool("FEICMS_AUTO_REFRESH", False)
+    refresh_interval_minutes: int = _env_int("FEICMS_REFRESH_INTERVAL", 720)
     health_interval_minutes: int = _env_int("FEICMS_HEALTH_INTERVAL", 30)
     health_fail_threshold: int = _env_int("FEICMS_HEALTH_THRESHOLD", 3)
     subscribe_interval_minutes: int = _env_int("FEICMS_SUBSCRIBE_INTERVAL", 1440)

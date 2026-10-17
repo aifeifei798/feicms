@@ -50,6 +50,7 @@ from .images import (
     scan_images,
 )
 from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video
+from .refresh import refresh_progress, refresh_summary, start_refresh_stale
 from .scheduler import scheduler_status, set_scheduler
 from .schemas import (
     AdultFilterUpdate,
@@ -64,6 +65,7 @@ from .schemas import (
     ImageOut,
     LoginRequest,
     Page,
+    RefreshRequest,
     SchedulerUpdate,
     SourceCreate,
     SourceImportRequest,
@@ -431,6 +433,34 @@ async def collect_resume_clear() -> dict[str, Any]:
 async def collect_status() -> dict[str, Any]:
     """Progress of the current (or most recent) collection sweep."""
     return collect_progress()
+
+
+@router.get("/refresh/stats")
+async def refresh_stats() -> dict[str, Any]:
+    """How many records still need a targeted re-check."""
+    return await refresh_summary()
+
+
+@router.get("/refresh/progress")
+async def refresh_status() -> dict[str, Any]:
+    """Progress of the current (or most recent) targeted sweep."""
+    return refresh_progress()
+
+
+@router.post("/refresh")
+async def refresh_now(payload: RefreshRequest) -> dict[str, Any]:
+    """定向补扫：按 vod_id 直接抓详情，刷新普通采集扫不到的老记录（后台运行）。"""
+    if collect_progress()["running"]:
+        raise HTTPException(409, "采集正在进行中，请先等待或查看 /api/collect/progress")
+    if refresh_progress()["running"]:
+        raise HTTPException(409, "定向补扫正在进行中，请先查看 /api/refresh/progress")
+    return await start_refresh_stale(
+        days=payload.days,
+        limit=payload.limit,
+        names=payload.names,
+        batch=payload.batch,
+        dry_run=payload.dry_run,
+    )
 
 
 @router.post("/health-check", response_model=HealthReport)
@@ -841,6 +871,11 @@ async def config() -> dict[str, Any]:
         "image_max_size": settings.image_max_size,
         "image_auto": settings.image_auto,
         "image_interval_minutes": settings.image_interval_minutes,
+        "auto_refresh": settings.auto_refresh,
+        "refresh_interval_minutes": settings.refresh_interval_minutes,
+        "refresh_days": settings.refresh_days,
+        "refresh_limit": settings.refresh_limit,
+        "refresh_batch": settings.refresh_batch,
         "host": settings.host,
         "port": settings.port,
         "auth_required": auth_enabled(),

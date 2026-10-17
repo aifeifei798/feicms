@@ -277,15 +277,46 @@ export interface SchedulerState {
   auto_collect: boolean;
   auto_collect_full: boolean;
   auto_images: boolean;
+  auto_refresh: boolean;
   collect_interval_minutes: number;
   health_interval_minutes: number;
   image_interval_minutes: number;
+  refresh_interval_minutes: number;
+  refresh_days: number;
+  refresh_limit: number;
   last_collect_at: string | null;
   last_health_at: string | null;
   last_image_at: string | null;
+  last_refresh_at: string | null;
   last_collect_result: { sources: number; inserted: number; updated: number; failed: number } | null;
+  last_refresh_result: { sources: number; checked: number; updated: number; inserted: number; gone: number } | null;
   collect_running: boolean;
   collect_progress: CollectProgress;
+}
+
+export interface RefreshStats {
+  source_items: number;
+  never_checked: number;
+  overdue_days: number;
+  overdue: number;
+  empty_plays: number;
+  oldest_video_updated_at: string | null;
+}
+
+export interface RefreshState {
+  running: boolean;
+  started_at: string | null;
+  updated_at: string | null;
+  finished_at: string | null;
+  dry_run: boolean;
+  sources: number;
+  checked: number;
+  fetched: number;
+  updated: number;
+  inserted: number;
+  gone: number;
+  unsupported_sources: number;
+  error: string | null;
 }
 
 export interface McpToolResult {
@@ -426,6 +457,11 @@ export interface Config {
   health_interval_minutes: number;
   subscribe_interval_minutes: number;
   health_fail_threshold: number;
+  auto_refresh: boolean;
+  refresh_interval_minutes: number;
+  refresh_days: number;
+  refresh_limit: number;
+  refresh_batch: number;
   host: string;
   port: number;
   auth_required: boolean;
@@ -468,6 +504,10 @@ export const api = {
   collectResume: () => request<CollectResume>("/api/collect/resume"),
   collectResumeClear: () =>
     request<{ cleared: boolean }>("/api/collect/resume", { method: "DELETE" }),
+  refreshStats: () => request<RefreshStats>("/api/refresh/stats"),
+  refreshProgress: () => request<RefreshState>("/api/refresh/progress"),
+  refresh: (body: { days?: number; limit?: number; names?: string[]; batch?: number; dry_run?: boolean } = {}) =>
+    request<RefreshState>("/api/refresh", { method: "POST", body: JSON.stringify(body) }),
   healthCheck: (onlyEnabled = true, reenable = true) =>
     request<HealthReport>(`/api/health-check?only_enabled=${onlyEnabled}&reenable=${reenable}`, { method: "POST" }),
   singleHealthCheck: (id: number, disableOnFail = true) =>
@@ -521,9 +561,11 @@ export const api = {
     auto_collect?: boolean;
     auto_collect_full?: boolean;
     auto_images?: boolean;
+    auto_refresh?: boolean;
     collect_interval_minutes?: number;
     health_interval_minutes?: number;
     image_interval_minutes?: number;
+    refresh_interval_minutes?: number;
   }) => request<SchedulerState>("/api/scheduler", { method: "POST", body: JSON.stringify(body) }),
   setAdminPassword: (body: { username?: string; password?: string }) =>
     request<{ user: string; password: string; env_file: string; restart_required: boolean }>(

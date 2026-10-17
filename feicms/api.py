@@ -15,7 +15,13 @@ from .config import BASE_DIR, settings
 from .db import dispose, init_db, session
 from .mcp import mcp_router
 from .models import Image
-from .scheduler import auto_collect_loop, auto_health_loop, auto_image_loop, auto_subscribe_loop
+from .scheduler import (
+    auto_collect_loop,
+    auto_health_loop,
+    auto_image_loop,
+    auto_refresh_loop,
+    auto_subscribe_loop,
+)
 from .subscribe import ensure_default_subscriptions
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -31,6 +37,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(auto_health_loop()),
         asyncio.create_task(auto_subscribe_loop()),
         asyncio.create_task(auto_image_loop()),
+        asyncio.create_task(auto_refresh_loop()),
     ]
     log.info(
         "feicms API ready (db=%s, auto_collect=%s, images=%s, auth=%s)",
