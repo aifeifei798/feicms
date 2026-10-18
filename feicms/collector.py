@@ -19,7 +19,7 @@ from .config import settings
 from .fetcher import Fetcher, build_query, fetch
 from .models import CollectJob, Image, Source, SourceItem, SourceType, Video
 from .normalizer import VodItem, build_signature, clean_text, parse_play_url, parse_raw_items, parse_response
-from .db import IS_SQLITE, session, write_lock
+from .db import IS_SQLITE, init_db, session, write_lock
 
 log = logging.getLogger("feicms.collector")
 
@@ -1128,7 +1128,7 @@ async def merge_duplicates(dry_run: bool = False) -> dict[str, Any]:
     }
 
 
-async def repair_plays() -> dict[str, int]:
+async def repair_plays(batch: int = 2000) -> dict[str, int]:
     """Re-parse every stored `play_from` / `play_url` with the current parser.
 
     Useful after the parser improves: rows whose parser produced nothing still
@@ -1136,37 +1136,65 @@ async def repair_plays() -> dict[str, int]:
     without re-fetching. Rows that already have structured plays have had their
     raw string dropped (see `compact_raw_plays`) and are left alone. Text
     columns are re-cleaned at the same time (HTML entities, stray markup).
+
+    Rows are walked in id order in batches so a multi-million-row library never
+    has to be held in memory at once.
     """
     changed = 0
     total = 0
     async with session() as s:
-        items = list(await s.scalars(select(SourceItem)))
-        for item in items:
-            total += 1
-            if item.play_url:
-                plays = parse_play_url(item.play_from, item.play_url)
-                new = json.dumps([p.as_dict() for p in plays], ensure_ascii=False)
-                if new != (item.plays or "[]"):
-                    item.plays = new
-                    changed += 1
-            for field_name in ("name", "type_name", "year", "area", "lang", "pic", "blurb", "actor", "director", "remarks"):
-                old = getattr(item, field_name) or ""
-                cleaned = clean_text(old)
-                if cleaned != old:
-                    setattr(item, field_name, cleaned)
+        after_id = 0
+        while True:
+            items = list(
+                await s.scalars(
+                    select(SourceItem).where(SourceItem.id > after_id).order_by(SourceItem.id).limit(batch)
+                )
+            )
+            if not items:
+                break
+            after_id = items[-1].id
+            for item in items:
+                total += 1
+                if item.play_url:
+                    plays = parse_play_url(item.play_from, item.play_url)
+                    new = json.dumps([p.as_dict() for p in plays], ensure_ascii=False)
+                    if new != (item.plays or "[]"):
+                        item.plays = new
+                        changed += 1
+                for field_name in (
+                    "name", "type_name", "year", "area", "lang", "pic", "blurb", "actor", "director", "remarks"
+                ):
+                    old = getattr(item, field_name) or ""
+                    cleaned = clean_text(old)
+                    if cleaned != old:
+                        setattr(item, field_name, cleaned)
+            await s.commit()
 
-        videos = list(await s.scalars(select(Video)))
-        for video in videos:
-            for field_name in ("name", "type_name", "area", "lang", "category", "blurb", "actor", "director", "remarks"):
-                old = getattr(video, field_name) or ""
-                cleaned = clean_text(old)
-                if cleaned != old:
-                    setattr(video, field_name, cleaned)
-        await s.commit()
-    return {"total": total, "changed": changed, "videos": len(videos)}
+        videos = 0
+        after_id = 0
+        while True:
+            batch_videos = list(
+                await s.scalars(
+                    select(Video).where(Video.id > after_id).order_by(Video.id).limit(batch)
+                )
+            )
+            if not batch_videos:
+                break
+            after_id = batch_videos[-1].id
+            for video in batch_videos:
+                videos += 1
+                for field_name in (
+                    "name", "type_name", "area", "lang", "category", "blurb", "actor", "director", "remarks"
+                ):
+                    old = getattr(video, field_name) or ""
+                    cleaned = clean_text(old)
+                    if cleaned != old:
+                        setattr(video, field_name, cleaned)
+            await s.commit()
+    return {"total": total, "changed": changed, "videos": videos}
 
 
-async def compact_raw_plays() -> dict[str, int]:
+async def compact_raw_plays(vacuum: bool = True) -> dict[str, int]:
     """Drop the raw `play_url` from rows whose structured `plays` is already parsed.
 
     The raw string is only repair material for rows the parser could not
@@ -1181,12 +1209,123 @@ async def compact_raw_plays() -> dict[str, int]:
         await s.execute(update(SourceItem).where(condition).values(play_url=""))
         await s.commit()
 
-    if IS_SQLITE:
-        from sqlalchemy.engine import make_url
+    if vacuum and IS_SQLITE:
+        from .storage import database_path
+
         import aiosqlite
 
-        database = make_url(settings.database_url).database
-        if database and database != ":memory:":
-            async with aiosqlite.connect(database) as conn:
+        database = database_path()
+        if database:
+            async with aiosqlite.connect(database, timeout=120) as conn:
                 await conn.execute("VACUUM")
     return {"cleared": cleared}
+
+
+def _database_path() -> str | None:
+    from .storage import database_path
+
+    return database_path()
+
+
+async def pack_plays(batch: int = 5000) -> dict[str, int]:
+    """Rewrite `source_items.plays` as zlib-compressed blobs.
+
+    Episode URLs repeat the same host and path patterns, so the column shrinks to
+    roughly a sixth of its size. Rows are walked in id order (keyset paging, so
+    a row is never revisited) and short values are left plain, which keeps
+    predicates like `plays == "[]"` working. Reads stay transparent: the column
+    type decorator decompresses on the way out.
+    """
+    from sqlalchemy import text
+
+    from .storage import MIN_COMPRESS_BYTES, compress_text
+
+    scanned = packed = saved = 0
+    after_id = 0
+    async with session() as s:
+        while True:
+            rows = (
+                await s.execute(
+                    text(
+                        "SELECT id, plays FROM source_items "
+                        "WHERE id > :after AND length(plays) >= :min "
+                        "ORDER BY id LIMIT :n"
+                    ),
+                    {"after": after_id, "min": MIN_COMPRESS_BYTES, "n": batch},
+                )
+            ).fetchall()
+            if not rows:
+                break
+            after_id = rows[-1][0]
+            updates = []
+            for row_id, raw in rows:
+                scanned += 1
+                if raw is None or isinstance(raw, bytes):
+                    continue  # already packed
+                original = raw.encode("utf-8")
+                compressed = compress_text(raw)
+                # compress_text hands back the original str when packing is useless;
+                # only a real bytes payload that is smaller counts as packed.
+                if isinstance(compressed, bytes) and len(compressed) < len(original):
+                    updates.append({"p": compressed, "i": row_id})
+                    saved += len(original) - len(compressed)
+            if updates:
+                await s.execute(
+                    text("UPDATE source_items SET plays = :p WHERE id = :i"),
+                    updates,
+                )
+                packed += len(updates)
+            await s.commit()
+            if scanned and scanned % (batch * 10) == 0:
+                log.info(
+                    "pack_plays: %d rows scanned, %d packed, %d MB saved",
+                    scanned,
+                    packed,
+                    saved // 1_000_000,
+                )
+    return {"scanned": scanned, "packed": packed, "saved_bytes": saved}
+
+
+async def optimize_database() -> dict[str, Any]:
+    """One pass of housekeeping: drop duplicate indexes, drop raw play strings,
+    compress the plays column, then VACUUM + ANALYZE. Reports the file size."""
+    from sqlalchemy import text
+
+    from .storage import database_bytes, packing_report
+
+    path = _database_path()
+    before = database_bytes()
+
+    dropped = await init_db()  # creates missing columns/indexes, drops duplicate ones
+    cleared = await compact_raw_plays(vacuum=False)
+    packed = await pack_plays()
+
+    vacuumed = False
+    if path:
+        import aiosqlite
+
+        # VACUUM needs the only write lock in the database; a running collector can
+        # hold it, so wait long enough instead of failing with "database is locked".
+        try:
+            async with aiosqlite.connect(path, timeout=120) as conn:
+                await conn.execute("VACUUM")
+                await conn.execute("ANALYZE")
+                vacuumed = True
+        except Exception as exc:  # noqa: BLE001 - the rest of the pass still counts
+            log.warning("VACUUM skipped (%s) - stop the collector and run optimize again", exc)
+
+    report = await packing_report()
+    after = database_bytes()
+    return {
+        "dropped_indexes": dropped,
+        "cleared_play_url": cleared["cleared"],
+        "packed_plays": packed["packed"],
+        "scanned": packed["scanned"],
+        "packed_rows": report["packed"],
+        "plain_rows": report["plain"],
+        "plays_bytes": report["stored_bytes"],
+        "vacuumed": vacuumed,
+        "bytes_before": before,
+        "bytes_after": after,
+        "saved": before - after,
+    }

@@ -15,6 +15,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from .storage import CompressedText
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -30,7 +32,7 @@ class Source(Base):
     __tablename__ = "sources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)  # unique already indexes it
     url: Mapped[str] = mapped_column(String(500), index=True)
     api_format: Mapped[str] = mapped_column(String(20), default="auto")  # auto | json | xml
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -80,9 +82,12 @@ class Video(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(300), index=True)
     signature: Mapped[str] = mapped_column(String(400), unique=True, index=True)
-    type_name: Mapped[str] = mapped_column(String(120), default="", index=True)
+    # `type_name` / `year` are the leftmost column of the composite indexes above,
+    # which already cover a filter on the column alone - a separate index would be
+    # a second copy of the same key.
+    type_name: Mapped[str] = mapped_column(String(120), default="")
     type_id: Mapped[int] = mapped_column(Integer, default=0)
-    year: Mapped[str] = mapped_column(String(10), default="", index=True)
+    year: Mapped[str] = mapped_column(String(10), default="")
     area: Mapped[str] = mapped_column(String(100), default="")
     lang: Mapped[str] = mapped_column(String(50), default="")
     category: Mapped[str] = mapped_column(String(120), default="", index=True)
@@ -117,8 +122,13 @@ class SourceItem(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
-    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), index=True)
+    # `uq_source_vod` (in __table_args__) indexes source_id as the leftmost column of
+    # the (source_id, source_vod_id) unique key, so a separate index on source_id
+    # would be a second copy of the same prefix.
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"))
+    # `ix_items_video` (above) already indexes video_id; adding index=True here too
+    # would create a second identical index and waste ~50 MB on a large library.
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"))
     source_vod_id: Mapped[int] = mapped_column(Integer)
 
     name: Mapped[str] = mapped_column(String(300), default="")
@@ -137,7 +147,9 @@ class SourceItem(Base):
     play_from: Mapped[str] = mapped_column(String(300), default="")
     play_url: Mapped[str] = mapped_column(Text, default="")
     # parsed: [{"from": "example", "episodes": [{"name": "第01集", "url": "https://..."}]}]
-    plays: Mapped[str] = mapped_column(Text, default="[]")
+    # Compressed on disk (see feicms/storage.py): this column is the single biggest
+    # contributor to the database file, and episode URLs compress to ~25% of their size.
+    plays: Mapped[str] = mapped_column(CompressedText(), default="[]")
 
     # When this record was last re-verified directly against its source. A normal
     # sweep only walks the first FEICMS_PAGES pages, so a title that never moves to
@@ -189,7 +201,7 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    url: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    url: Mapped[str] = mapped_column(String(500), unique=True)  # unique already indexes it
     kind: Mapped[str] = mapped_column(String(10), default="auto")  # json | txt | auto
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -221,7 +233,7 @@ class ApiKey(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), default="key")
-    key_hash: Mapped[str] = mapped_column(String(64), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64))  # unique constraint below indexes it
     prefix: Mapped[str] = mapped_column(String(12), default="")  # first chars, for display
     scopes: Mapped[str] = mapped_column(String(60), default="read")  # comma separated
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -256,13 +268,14 @@ class Image(Base):
     __tablename__ = "images"
     __table_args__ = (
         UniqueConstraint("url", name="uq_image_url"),
-        Index("ix_image_status", "status"),
         Index("ix_image_sha", "sha256"),
         Index("ix_image_seen", "first_seen"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    url: Mapped[str] = mapped_column(String(600), index=True)
+    # `url` is unique, so the constraint already indexes it - index=True here would
+    # create a second copy of the same index.
+    url: Mapped[str] = mapped_column(String(600))
     host: Mapped[str] = mapped_column(String(200), default="", index=True)
 
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

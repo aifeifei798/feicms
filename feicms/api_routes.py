@@ -32,6 +32,8 @@ from .collector import (
     collect_source,
     compact_raw_plays,
     merge_duplicates,
+    optimize_database,
+    pack_plays,
     repair_plays,
     resume_summary,
     start_collect_all,
@@ -953,6 +955,22 @@ async def compact_raw() -> dict[str, int]:
 async def repair_plays_endpoint() -> dict[str, int]:
     """Re-parse stored `play_from` / `play_url` into structured play sources."""
     return await repair_plays()
+
+
+@router.post("/pack-plays")
+async def pack_plays_endpoint(batch: int = 5000) -> dict[str, int]:
+    """Maintenance: store the `plays` JSON compressed (zlib) to shrink the database."""
+    result = await pack_plays(batch=batch)
+    clear_site_cache()
+    return result
+
+
+@router.post("/optimize")
+async def optimize_endpoint() -> dict[str, Any]:
+    """One-pass housekeeping: redundant indexes, raw play_url, compressed plays, VACUUM."""
+    result = await optimize_database()
+    clear_site_cache()
+    return result
 
 
 @router.post("/merge-duplicates")

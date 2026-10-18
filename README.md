@@ -443,6 +443,20 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 另外 `feicms compact-raw` 清掉已经解析成结构化 `plays` 的原始 `play_url` 并 `VACUUM`，实测数据库从
 1.79 GB 降到 1.44 GB。
 
+**播放源 JSON 压缩存储：** `source_items.plays` 是库里最大的列（195 万条记录、约 1.8 GB），里面全是重复的
+域名和路径。`feicms/storage.py` 的 `CompressedText` 类型装饰器把这一列在磁盘上 zlib 压缩，Python 侧读写
+仍然是普通 JSON 字符串，调用方完全无感：
+
+- 短值（< 64 字节）保持明文，所以 `plays == "[]"` 这类 SQL 谓词照常工作；
+- 老数据（明文行）由 `feicms pack-plays` 一次性改写，按 id 键集分页，幂等，跑第二次什么都不做；
+- 实测压缩后这一列只占约 1/6 的体积。
+
+`feicms optimize` 把整套瘦身一次做完：删除重复索引 → 清冗余 `play_url` → 压缩 `plays` → `VACUUM` + `ANALYZE`，
+并打印前后文件大小。`feicms db-size` 是对应的体检报告（文件大小 / 已压缩行数 / 残留 `play_url` / 重复索引）。
+
+**重复索引：** 早期 schema 里 `index=True` 与显式 `Index(...)` / `UNIQUE` 约束重叠，同一列被索引两遍。
+`init-db` 现在会自动删掉这些孪生索引（只有孪生确实存在时才删，所以老库不会丢索引）。
+
 ---
 
 ## 8. 配置（`.env`）
@@ -525,13 +539,16 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh subscribe --add https://... # 源订阅：--add/--remove/--sync/--url
 
 # 数据维护（去重、清理、索引）
-./server.sh maintain                   # 一键维护：repair-plays + 去重预览 + reindex + compact-raw
+./server.sh maintain                   # 一键维护：repair-plays + 去重预览 + reindex + optimize
 ./server.sh maintain --apply           #  additionally 真正合并重复 + prune（这两个会删数据）
 ./server.sh reindex                    # 重建标题搜索索引（FTS5）
 ./server.sh merge-duplicates --dry-run # 同标题重复影片预览（去掉 --dry-run 才合并）
 ./server.sh prune                      # 删除没有播放源的记录
 ./server.sh repair-plays               # 用当前解析规则重建 plays（不联网）
 ./server.sh compact-raw                # 清理冗余 raw play_url + VACUUM 收缩库
+./server.sh pack-plays                 # 把播放源 JSON 压缩存储（zlib）
+./server.sh optimize                   # 一键瘦身：删重复索引 + compact-raw + pack-plays + VACUUM + ANALYZE
+./server.sh db-size                    # 数据库体积体检：大小 / 压缩率 / 重复索引
 ./server.sh adult --show 20            # 前台成人过滤：看命中；--on/--off/--refresh
 ./server.sh export --out backup.jsonl --limit 10000
 ./server.sh doctor                     # 体检：服务状态 + 库统计 + 待补扫 + 站点健康 + 图片

@@ -89,7 +89,8 @@ async def session() -> AsyncIterator[AsyncSession]:
         await s.commit()
 
 
-async def init_db() -> None:
+async def init_db() -> list[str]:
+    """Create anything the schema is missing. Returns the duplicate indexes removed."""
     from sqlalchemy import text
 
     async with engine.begin() as conn:
@@ -99,6 +100,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_columns(conn)
         await _ensure_indexes(conn)
+        dropped = await _drop_redundant_indexes(conn)
         await _ensure_fts(conn)
 
     # `videos.is_adult` is what the front site filters on; keep it in sync with
@@ -106,6 +108,7 @@ async def init_db() -> None:
     from .adult import refresh_adult_flags
 
     await refresh_adult_flags()
+    return dropped
 
 
 async def analyze() -> None:
@@ -161,6 +164,47 @@ async def _ensure_indexes(conn) -> None:
         await conn.execute(
             text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})")
         )
+
+
+# Indexes that used to be created twice (once by `index=True` on the column, once
+# explicitly, or alongside a UNIQUE constraint). Each pair indexes exactly the same
+# columns, so one of them is pure disk and write overhead. `keeper` is the index that
+# stays: a dropped index is only removed when its twin is present, so a database that
+# never had the twin keeps its only index.
+_REDUNDANT_INDEXES = (
+    ("source_items", "ix_source_items_video_id", "ix_items_video"),
+    # `uq_source_vod UNIQUE (source_id, source_vod_id)` already covers source_id as
+    # its leftmost column, so the single-column index is a second copy of a prefix.
+    ("source_items", "ix_source_items_source_id", "sqlite_autoindex_source_items_1"),
+    ("images", "ix_image_status", "ix_images_status"),
+    ("images", "ix_images_url", "sqlite_autoindex_images_1"),
+    ("sources", "ix_sources_name", "sqlite_autoindex_sources_1"),
+    ("subscriptions", "ix_subscriptions_url", "sqlite_autoindex_subscriptions_1"),
+    ("api_keys", "ix_api_keys_key_hash", "sqlite_autoindex_api_keys_1"),
+    # A composite index can serve a query on its leftmost column, so the single-column
+    # index is only a shorter copy of the same key. `_ensure_indexes` runs first, so
+    # the composite is always present when these are dropped.
+    ("videos", "ix_videos_type_name", "ix_videos_type_updated"),
+    ("videos", "ix_videos_year", "ix_videos_year_updated"),
+)
+
+
+async def _drop_redundant_indexes(conn) -> list[str]:
+    """Remove duplicate indexes left over from older schemas."""
+    if not IS_SQLITE:
+        return []
+    from sqlalchemy import text
+
+    existing = {
+        row[0]
+        for row in await conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+    }
+    dropped: list[str] = []
+    for _table, name, keeper in _REDUNDANT_INDEXES:
+        if name in existing and keeper in existing:
+            await conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+            dropped.append(name)
+    return dropped
 
 
 async def _ensure_fts(conn, force: bool = False) -> None:

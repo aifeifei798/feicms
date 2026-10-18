@@ -168,6 +168,21 @@ export default function Settings({ notify }: { notify: Notify }) {
     }
   };
 
+  const optimize = async () => {
+    setBusy(true);
+    try {
+      const r = await api.optimize();
+      notify(
+        `数据库 ${(r.bytes_before / 1e9).toFixed(2)} GB → ${(r.bytes_after / 1e9).toFixed(2)} GB，` +
+          `省 ${(r.saved / 1e6).toFixed(0)} MB（压缩 ${r.packed_plays} 条播放源，删除 ${r.dropped_indexes.length} 个重复索引）`
+      );
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveAdultFilter = async (body: {
     hide_adult?: boolean;
     type_keywords?: string[];
@@ -304,6 +319,9 @@ export default function Settings({ notify }: { notify: Notify }) {
             </button>
             <button className="btn btn-sm btn-outline" onClick={repairPlays} disabled={busy}>
               重建播放源
+            </button>
+            <button className="btn btn-sm btn-outline" onClick={optimize} disabled={busy}>
+              优化数据库（压缩播放源 + VACUUM）
             </button>
             <button className="btn btn-sm btn-outline" onClick={prune} disabled={busy}>
               清理无播放源记录

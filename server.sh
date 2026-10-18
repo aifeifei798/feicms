@@ -33,12 +33,15 @@
 #   ./server.sh prune          删除没有播放源的记录 / 孤儿影片
 #   ./server.sh repair-plays   用当前解析规则重建 plays（不联网）
 #   ./server.sh compact-raw    清理冗余 raw play_url 并 VACUUM 收缩数据库
+#   ./server.sh pack-plays     把播放源 JSON 压缩存储（zlib，通常缩小到 1/6）
+#   ./server.sh optimize       一键瘦身：删重复索引 + 清冗余 play_url + 压缩 plays + VACUUM
+#   ./server.sh db-size        数据库体积体检：文件大小 / plays 压缩率 / 重复索引
 #   ./server.sh adult [--on|--off|--refresh|--show N]   前台成人内容过滤
 #   ./server.sh export [--out backup.jsonl] [--limit N] [--q 关键词]
 #   ./server.sh apikey create|list|revoke|update        API key 管理
 #   ./server.sh mcp            以 stdio 方式跑 MCP server（给 AI 客户端）
 #   ./server.sh mcp-config [--url http://localhost:8000/mcp]
-#   ./server.sh maintain [--apply]   一键维护：repair-plays + 去重预览 + reindex + compact-raw
+#   ./server.sh maintain [--apply]   一键维护：repair-plays + 去重预览 + reindex + optimize
 #                                    （加 --apply 才真正合并重复与 prune，这两个会删数据）
 #   ./server.sh doctor         体检：服务状态 + 库统计 + 待补扫 + 站点健康 + 图片
 #   ./server.sh images scan|download|stats|repair|prune
@@ -606,8 +609,20 @@ cmd_maintain() {
   run_py feicms reindex
 
   echo
-  echo "== 清理冗余 raw 播放字段 + VACUUM =="
-  run_py feicms compact-raw
+  echo "== 清理冗余 raw 播放字段 + 压缩播放源 + VACUUM =="
+  cmd_optimize
+}
+
+cmd_optimize() {
+  load_env
+  if [ -f "$COLLECT_PID" ] && kill -0 "$(cat "$COLLECT_PID")" 2>/dev/null; then
+    echo "后台全量扫描正在运行，VACUUM 可能拿不到锁。先 ./server.sh full-stop 再跑 optimize。"
+  elif [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "服务正在运行（VACUUM 期间前台请求可能变慢，但数据安全）。"
+  fi
+  run_py feicms optimize
+  echo
+  run_py feicms db-size
 }
 
 cmd_doctor() {
@@ -617,6 +632,9 @@ cmd_doctor() {
   echo
   echo "== 数据库统计 =="
   run_py feicms stats
+  echo
+  echo "== 数据库体积 =="
+  run_py feicms db-size
   echo
   echo "== 定向补扫待核对 =="
   run_py feicms refresh-stats
@@ -667,6 +685,9 @@ case "$command" in
   prune) run_py feicms prune ;;
   repair-plays) run_py feicms repair-plays ;;
   compact-raw) run_py feicms compact-raw ;;
+  pack-plays) run_py feicms pack-plays "$@" ;;
+  optimize) cmd_optimize ;;
+  db-size) run_py feicms db-size ;;
   adult) run_py feicms adult "$@" ;;
   export) run_py feicms export "$@" ;;
   apikey) run_py feicms apikey "$@" ;;

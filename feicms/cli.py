@@ -652,13 +652,15 @@ def prune() -> None:
 
 
 @app.command("repair-plays")
-def repair_plays_cmd() -> None:
+def repair_plays_cmd(
+    batch: int = typer.Option(2000, "--batch", help="每批处理多少条（避免一次性载入全库）"),
+) -> None:
     """用当前播放源解析规则重建 source_items.plays（不重新采集，只重新解析 raw 字段）。"""
     from .collector import repair_plays
 
     async def _run() -> None:
         await init_db()
-        result = await repair_plays()
+        result = await repair_plays(batch=batch)
         console.print(
             f"[green]重建 {result['changed']} 条播放源[/green] · 共 {result['total']} 条 raw 记录"
         )
@@ -675,6 +677,100 @@ def compact_raw_cmd() -> None:
         await init_db()
         result = await compact_raw_plays()
         console.print(f"[green]清理 {result['cleared']} 条冗余 play_url[/green]")
+
+    asyncio.run(_run())
+
+
+@app.command("pack-plays")
+def pack_plays_cmd(
+    batch: int = typer.Option(5000, "--batch", help="每批写回多少条"),
+) -> None:
+    """把 source_items.plays 压缩存储（zlib），播放源 JSON 通常能缩小到 1/6。"""
+    from .collector import pack_plays
+
+    async def _run() -> None:
+        await init_db()
+        result = await pack_plays(batch=batch)
+        console.print(
+            f"[green]压缩 {result['packed']} 条播放源[/green] · 扫描 {result['scanned']} 条 · "
+            f"省 {result['saved_bytes'] / 1e6:.0f} MB"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command("optimize")
+def optimize_cmd() -> None:
+    """一键优化：删重复索引 + 清冗余 play_url + 压缩 plays + VACUUM + ANALYZE。"""
+    from .collector import optimize_database
+
+    async def _run() -> None:
+        result = await optimize_database()
+        saved = result["saved"]
+        console.print(
+            f"[green]优化完成[/green] · 清理 {result['cleared_play_url']} 条 play_url · "
+            f"压缩 {result['packed_plays']} 条 plays · "
+            f"删除 {len(result['dropped_indexes'])} 个重复索引"
+        )
+        if result["dropped_indexes"]:
+            console.print("  删除的索引: " + ", ".join(result["dropped_indexes"]))
+        if not result["vacuumed"]:
+            console.print("[yellow]VACUUM 未执行[/yellow]（数据库被占用）：停服务后再跑一次 optimize")
+        console.print(
+            f"数据库 {result['bytes_before'] / 1e9:.2f} GB -> {result['bytes_after'] / 1e9:.2f} GB "
+            f"[green]省 {saved / 1e6:.0f} MB[/green]"
+        )
+        console.print(
+            f"plays 列现在 {result['plays_bytes'] / 1e6:.0f} MB "
+            f"（{result['packed_rows']} 条已压缩 / {result['plain_rows']} 条仍为明文）"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command("db-size")
+def db_size_cmd() -> None:
+    """数据库体积体检：文件大小、plays 压缩情况、重复索引。"""
+    from .db import _REDUNDANT_INDEXES
+    from .storage import database_bytes, database_path, packing_report
+
+    async def _run() -> None:
+        path = database_path()
+        report = await packing_report()
+        async with session() as s:
+            from sqlalchemy import text
+
+            names = {
+                row[0]
+                for row in await s.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='index'")
+                )
+            }
+            play_url_bytes = (
+                await s.scalar(
+                    text("SELECT COALESCE(SUM(length(play_url)), 0) FROM source_items WHERE play_url <> ''")
+                )
+            ) or 0
+        table = Table(title="数据库体积")
+        table.add_column("项目", style="cyan")
+        table.add_column("值")
+        table.add_column("说明")
+        table.add_row("文件", f"{database_bytes() / 1e9:.2f} GB", path or "(内存)")
+        table.add_row("source_items", f"{report['rows']} 条", "")
+        table.add_row(
+            "plays 已压缩",
+            f"{report['packed']} 条",
+            f"共 {report['stored_bytes'] / 1e6:.0f} MB 在磁盘上",
+        )
+        table.add_row("plays 未压缩", f"{report['plain']} 条", "跑 `optimize` 或 `pack-plays` 压缩")
+        table.add_row("play_url 残留", f"{play_url_bytes} 字节", "跑 `compact-raw` 清理")
+        leftovers = [
+            name
+            for _t, name, keeper in _REDUNDANT_INDEXES
+            if name in names and keeper in names
+        ]
+        table.add_row("重复索引", ", ".join(leftovers) or "无", "跑 `optimize` 自动删除")
+        console.print(table)
 
     asyncio.run(_run())
 

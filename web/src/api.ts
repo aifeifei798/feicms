@@ -523,6 +523,19 @@ export const api = {
   videoSources: (id: number) => request<{ source_id: number; source_name: string; source_vod_id: number; play_from: string; vod_time: string; episodes: { from: string; episodes: Episode[] }[] }[]>(`/api/videos/${id}/sources`),
   prune: () => request<{ removed: number }>("/api/prune", { method: "POST" }),
   repairPlays: () => request<{ total: number; changed: number; videos: number }>("/api/repair-plays", { method: "POST" }),
+  optimize: () =>
+    request<{
+      dropped_indexes: string[];
+      cleared_play_url: number;
+      packed_plays: number;
+      packed_rows: number;
+      plain_rows: number;
+      plays_bytes: number;
+      vacuumed: boolean;
+      bytes_before: number;
+      bytes_after: number;
+      saved: number;
+    }>("/api/optimize", { method: "POST" }),
   mergeDuplicates: (dryRun = false) =>
     request<MergeResult>(`/api/merge-duplicates?dry_run=${dryRun}`, { method: "POST" }),
   setAdultFilter: (body: {

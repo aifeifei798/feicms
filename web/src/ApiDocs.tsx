@@ -474,6 +474,19 @@ const GROUPS: Group[] = [
       },
       {
         method: "POST",
+        path: "/api/pack-plays",
+        summary: "把播放源 JSON 压缩存储（zlib），只改磁盘上的字节，读取侧完全透明",
+        params: [{ name: "batch", type: "int", default: "5000", note: "每批写回多少条" }],
+        example: "curl -X POST 'http://127.0.0.1:8000/api/pack-plays?batch=5000'",
+      },
+      {
+        method: "POST",
+        path: "/api/optimize",
+        summary: "一键瘦身：删除重复索引 + 清理冗余 raw play_url + 压缩 plays + VACUUM + ANALYZE，返回前后文件大小",
+        example: "curl -X POST http://127.0.0.1:8000/api/optimize",
+      },
+      {
+        method: "POST",
         path: "/api/merge-duplicates",
         summary: "合并同标题的重复影片：把重复行的采集记录（含播放源）迁移到最完整的一条，再删除重复行",
         params: [{ name: "dry_run", type: "bool", default: "false", note: "true 只统计并返回示例，不改动数据" }],
