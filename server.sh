@@ -1,53 +1,55 @@
 #!/usr/bin/env bash
 # feicms 服务端管理脚本
 #
-#   ./server.sh start          启动（后台，日志写到 data/server.log）
-#   ./server.sh start --user admin --password xxx   先写入 .env 的账号再启动
-#   ./server.sh start --host 0.0.0.0 --port 8000    临时覆盖监听地址（默认 0.0.0.0）
-#   ./server.sh url            打印本机 + 局域网访问地址
-#   ./server.sh stop           停止
-#   ./server.sh restart        重启
-#   ./server.sh status         查看运行状态 / 健康 / 是否开启登录
-#   ./server.sh logs [-f]     查看日志（-f 持续跟踪）
-#   ./server.sh dev            前台启动，带 --reload（开发用）
+#   ./server.sh add <name> <url> [--format auto] [--pages 5] [--tags 电影]
+#   ./server.sh adult [--on|--off|--refresh|--show N]   前台成人内容过滤
+#   ./server.sh apikey create|list|revoke|update        API key 管理
 #   ./server.sh build          构建前端 (pnpm/npm)
-#   ./server.sh init           init-db + seed
 #   ./server.sh collect [--full] [--pages N]
+#   ./server.sh compact-raw    清理冗余 raw play_url 并 VACUUM 收缩数据库
+#   ./server.sh db-size        数据库体积体检：文件大小 / plays 压缩率 / 重复索引
+#   ./server.sh dev            前台启动，带 --reload（开发用）
+#   ./server.sh doctor         体检：服务状态 + 库统计 + 待补扫 + 站点健康 + 图片
+#   ./server.sh embed          构建语义搜索向量索引（embeddings）
+#   ./server.sh export [--out backup.jsonl] [--limit N] [--q 关键词]
 #   ./server.sh full [--wait] [--fresh]  后台全量扫描（每站真实页数，默认断点续传, 先做健康检查）
 #   ./server.sh full --no-health       跳过先置的健康检查（更快，可能盲扫到坏源）
 #   ./server.sh full-status    实时进度 + 断点（读 data/collect_status.json）
 #   ./server.sh full-stop      停止后台全量扫描（断点保留）
-#   ./server.sh resume [--clear] [--detail]  查看 / 清除断点续传记录
+#   ./server.sh health         探测所有站点
+#   ./server.sh images scan|download|stats|repair|prune
+#   ./server.sh init           init-db + seed
+#   ./server.sh logs [-f]     查看日志（-f 持续跟踪）
+#   ./server.sh maintain [--apply]   一键维护：repair-plays + 去重预览 + reindex + optimize
+#                                    （加 --apply 才真正合并重复与 prune，这两个会删数据）
+#   ./server.sh mcp            以 stdio 方式跑 MCP server（给 AI 客户端）
+#   ./server.sh mcp-config [--url http://localhost:8000/mcp]
+#   ./server.sh merge-duplicates [--dry-run]   合并同标题的重复影片
+#   ./server.sh optimize       一键瘦身：删重复索引 + 清冗余 play_url + 压缩 plays + VACUUM
+#   ./server.sh pack-plays     把播放源 JSON 压缩存储（zlib，通常缩小到 1/6）
+#   ./server.sh passwd [--user admin] [--password xxx]
+#   ./server.sh prune          删除没有播放源的记录 / 孤儿影片
+#   ./server.sh reindex        重建标题搜索索引（FTS5，一次性扫全库）
 #   ./server.sh refresh [--days N] [--limit N] [--name 站点] [--dry-run]
 #                        后台定向补扫：按 vod_id 抓详情，刷新增量采集扫不到的老记录
 #   ./server.sh refresh-status   补扫进度（读 data/refresh.log）
 #   ./server.sh refresh-stop     停止补扫
 #   ./server.sh refresh-stats    还有多少条待补扫
-#   ./server.sh health         探测所有站点
-#   ./server.sh sources [--enabled-only] [--limit N]   列出站点与健康状态
-#   ./server.sh add <name> <url> [--format auto] [--pages 5] [--tags 电影]
-#   ./server.sh seed [--file sources.yaml]   导入站点列表（幂等）
-#   ./server.sh subscribe [--add URL|--remove URL|--sync|--url URL]
-#   ./server.sh reindex        重建标题搜索索引（FTS5，一次性扫全库）
-#   ./server.sh merge-duplicates [--dry-run]   合并同标题的重复影片
-#   ./server.sh prune          删除没有播放源的记录 / 孤儿影片
 #   ./server.sh repair-plays   用当前解析规则重建 plays（不联网）
-#   ./server.sh compact-raw    清理冗余 raw play_url 并 VACUUM 收缩数据库
-#   ./server.sh pack-plays     把播放源 JSON 压缩存储（zlib，通常缩小到 1/6）
-#   ./server.sh optimize       一键瘦身：删重复索引 + 清冗余 play_url + 压缩 plays + VACUUM
-#   ./server.sh db-size        数据库体积体检：文件大小 / plays 压缩率 / 重复索引
-#   ./server.sh adult [--on|--off|--refresh|--show N]   前台成人内容过滤
-#   ./server.sh export [--out backup.jsonl] [--limit N] [--q 关键词]
-#   ./server.sh apikey create|list|revoke|update        API key 管理
-#   ./server.sh mcp            以 stdio 方式跑 MCP server（给 AI 客户端）
-#   ./server.sh mcp-config [--url http://localhost:8000/mcp]
-#   ./server.sh maintain [--apply]   一键维护：repair-plays + 去重预览 + reindex + optimize
-#                                    （加 --apply 才真正合并重复与 prune，这两个会删数据）
-#   ./server.sh doctor         体检：服务状态 + 库统计 + 待补扫 + 站点健康 + 图片
-#   ./server.sh images scan|download|stats|repair|prune
-#   ./server.sh passwd [--user admin] [--password xxx]
-#   ./server.sh token          打印一个 API token（curl 用）
+#   ./server.sh restart        重启
+#   ./server.sh resume [--clear] [--detail]  查看 / 清除断点续传记录
+#   ./server.sh seed [--file sources.yaml]   导入站点列表（幂等）
+#   ./server.sh sources [--enabled-only] [--limit N]   列出站点与健康状态
+#   ./server.sh start          启动（后台，日志写到 data/server.log）
+#   ./server.sh start --user admin --password xxx   先写入 .env 的账号再启动
+#   ./server.sh start --host 0.0.0.0 --port 8000    临时覆盖监听地址（默认 0.0.0.0）
+#   ./server.sh status         查看运行状态 / 健康 / 是否开启登录
+#   ./server.sh stop           停止
+#   ./server.sh subscribe [--add URL|--remove URL|--sync|--url URL]
 #   ./server.sh systemd        打印 systemd 服务配置（开机自启）
+#   ./server.sh token          打印一个 API token（curl 用）
+#   ./server.sh url            打印本机 + 局域网访问地址
+set -euo pipefail
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
