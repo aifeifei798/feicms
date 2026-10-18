@@ -235,16 +235,25 @@ async def semantic_search(
         candidate_ids = list(await s.scalars(stmt))
     if not candidate_ids:
         return []
-    # ensure embeddings
+    # ensure embeddings for a bounded set only
     await ensure_embeddings(candidate_ids)
-    # stream embeddings and score
+    # score via joined query to avoid a huge IN (...) clause
     scored: list[tuple[float, int]] = []
     async with session() as s:
-        rows = await s.execute(
-            select(VideoEmbedding.video_id, VideoEmbedding.vector).where(
-                VideoEmbedding.video_id.in_(candidate_ids)
-            )
+        stmt = (
+            select(VideoEmbedding.video_id, VideoEmbedding.vector)
+            .join(Video, Video.id == VideoEmbedding.video_id)
         )
+        if type_name:
+            if type_name == "未分类":
+                stmt = stmt.where(Video.type_name.is_(None) | (Video.type_name == ""))
+            else:
+                stmt = stmt.where(Video.type_name == type_name)
+        if year:
+            stmt = stmt.where(Video.year == year)
+        if effective_hide:
+            stmt = stmt.where(Video.is_adult.is_(False))
+        rows = await s.execute(stmt)
         for vid, blob in rows:
             vec = unpack_vector(blob)
             if not vec:
