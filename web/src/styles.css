@@ -546,6 +546,12 @@ body {
   color: var(--brand);
   border-color: var(--brand);
 }
+.search-go-active {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--brand-soft, rgba(99, 102, 241, 0.12));
+  font-weight: 700;
+}
 .search-go svg {
   width: 16px;
   height: 16px;
