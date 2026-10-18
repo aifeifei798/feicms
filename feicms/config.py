@@ -140,6 +140,10 @@ class Settings:
     adult_type_keywords: tuple[str, ...] | None = field(default_factory=lambda: _env_csv("FEICMS_ADULT_TYPE_KEYWORDS"))
     adult_name_keywords: tuple[str, ...] | None = field(default_factory=lambda: _env_csv("FEICMS_ADULT_NAME_KEYWORDS"))
 
+    # Semantic search via an OpenAI-compatible embeddings service.
+    embeddings_url: str = _env("FEICMS_EMBEDDINGS_URL", "http://127.0.0.1:19001")
+    embeddings_model: str = _env("FEICMS_EMBEDDINGS_MODEL", "granite")
+
     settings: dict = field(default_factory=dict)
 
 

@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -293,3 +294,15 @@ class Image(Base):
 
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     downloaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class VideoEmbedding(Base):
+    """One vector per video for semantic search. Stored packed as float32."""
+
+    __tablename__ = "video_embeddings"
+
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), primary_key=True)
+    model: Mapped[str] = mapped_column(String(120), default="")
+    dim: Mapped[int] = mapped_column(Integer, default=0)
+    vector: Mapped[bytes] = mapped_column(LargeBinary, default=b"")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

@@ -22,6 +22,7 @@ from .collector import (
     resume_summary,
 )
 from .db import init_db, rebuild_fts, session
+from .embeddings import rebuild_embeddings
 from .health import health_check_all, health_rank
 from .refresh import pick_refresh_targets, refresh_stale, refresh_summary
 from .adult import adult_condition, adult_name_keywords, adult_type_keywords, matched_keyword
@@ -45,6 +46,17 @@ def reindex_cmd() -> None:
     """Rebuild the title search index (one pass over the library)."""
     asyncio.run(rebuild_fts())
     console.print("[green]title search index rebuilt[/green]")
+
+
+@app.command("embed")
+def embed_cmd(
+    force: bool = typer.Option(False, "--force", help="Recompute all vectors"),
+    batch_size: int = typer.Option(64, "--batch-size"),
+    limit: int | None = typer.Option(None, "--limit"),
+) -> None:
+    """Build semantic-search embeddings for the library."""
+    result = asyncio.run(rebuild_embeddings(batch_size=batch_size, force=force, limit=limit))
+    console.print(result)
 
 
 @app.command("seed")

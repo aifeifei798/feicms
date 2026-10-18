@@ -40,6 +40,7 @@ from .collector import (
 )
 from .config import settings, update_env_file
 from . import db
+from . import embeddings as embeddings_mod
 from .db import IS_SQLITE, session
 from .health import check_source, health_check_all, health_rank
 from .images import (
@@ -51,7 +52,7 @@ from .images import (
     repair_images,
     scan_images,
 )
-from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video
+from .models import ApiKey, CollectJob, Image, Source, SourceItem, Subscription, Video, VideoEmbedding
 from .refresh import refresh_progress, refresh_summary, start_refresh_stale
 from .scheduler import scheduler_status, set_scheduler
 from .schemas import (
@@ -886,6 +887,8 @@ async def config() -> dict[str, Any]:
         "hide_adult": settings.hide_adult,
         "adult_type_keywords": list(adult_type_keywords()),
         "adult_name_keywords": list(adult_name_keywords()),
+        "embeddings_url": settings.embeddings_url,
+        "embeddings_model": settings.embeddings_model,
     }
 
 
@@ -1311,7 +1314,31 @@ async def site_videos(
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
     hide_adult: bool | None = Query(None),
+    semantic: bool = Query(False),
+    mode: str | None = Query(None),
 ) -> Page:
+    use_semantic = semantic or (mode in ("semantic", "vector", "hybrid"))
+    if q and use_semantic and embeddings_mod.embeddings_enabled():
+        results = await embeddings_mod.semantic_search(
+            q, type_name=type_name, year=year, hide_adult=hide_adult
+        )
+        total = len(results)
+        page_ids = [vid for vid, _ in results[offset : offset + limit]]
+        if page_ids:
+            async with session() as s:
+                videos = list(await s.scalars(select(Video).where(Video.id.in_(page_ids))))
+                by_id = {v.id: v for v in videos}
+                ordered = [by_id[vid] for vid in page_ids if vid in by_id]
+                pic_map = await _local_pic_map(s, [v.pic for v in ordered])
+            items = [_summary(v, pic_map) for v in ordered]
+        else:
+            items = []
+        return Page(
+            total=total,
+            page=offset // limit + 1,
+            limit=limit,
+            items=items,
+        )
     async with session() as s:
         stmt = select(Video)
         if q:
@@ -1377,6 +1404,32 @@ async def site_related(
         )
         pic_map = await _local_pic_map(s, [v.pic for v in videos])
         return [_summary(v, pic_map) for v in videos]
+
+
+@router.get("/embeddings/status")
+async def embeddings_status() -> dict[str, Any]:
+    from sqlalchemy import func
+
+    async with session() as s:
+        total_videos = await s.scalar(select(func.count()).select_from(Video))
+        total_emb = await s.scalar(select(func.count()).select_from(VideoEmbedding))
+    return {
+        "enabled": embeddings_mod.embeddings_enabled(),
+        "service_available": await embeddings_mod.service_available(),
+        "url": settings.embeddings_url,
+        "model": settings.embeddings_model,
+        "videos": total_videos or 0,
+        "embeddings": total_emb or 0,
+    }
+
+
+@router.post("/embeddings/rebuild", dependencies=[Depends(require_admin)])
+async def embeddings_rebuild(
+    force: bool = False,
+    batch_size: int = Query(64, ge=1, le=512),
+    limit: int | None = Query(None, ge=1),
+) -> dict[str, Any]:
+    return await embeddings_mod.rebuild_embeddings(batch_size=batch_size, force=force, limit=limit)
 
 
 @site_router.get("/pic/{image_id}", response_model=None)

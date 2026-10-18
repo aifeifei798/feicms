@@ -681,6 +681,7 @@ case "$command" in
   seed) run_py feicms seed "$@" ;;
   subscribe) run_py feicms subscribe "$@" ;;
   reindex) run_py feicms reindex ;;
+  embed) run_py feicms embed "$@" ;;
   merge-duplicates) run_py feicms merge-duplicates "$@" ;;
   prune) run_py feicms prune ;;
   repair-plays) run_py feicms repair-plays ;;

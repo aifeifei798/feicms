@@ -82,6 +82,7 @@ export default function Site() {
   const [filters, setFilters] = React.useState<SiteFilters | null>(null);
 
   const [q, setQ] = React.useState("");
+  const [semantic, setSemantic] = React.useState(false);
   const [type, setType] = React.useState("");
   const [year, setYear] = React.useState("");
   const [offset, setOffset] = React.useState(0);
@@ -136,14 +137,14 @@ export default function Site() {
     setLoading(true);
     setError(null);
     siteApi
-      .videos({ q, type_name: type, year, limit: PAGE_SIZE, offset })
+      .videos({ q, type_name: type, year, limit: PAGE_SIZE, offset, semantic })
       .then((page) => {
         setItems(page.items as VideoSummary[]);
         setTotal(page.total);
       })
       .catch((e: Error) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
-  }, [route, q, type, year, offset]);
+  }, [route, q, type, year, offset, semantic]);
 
   React.useEffect(() => {
     if (route.view !== "video") return;
@@ -307,6 +308,15 @@ export default function Site() {
               if (route.view !== "home") go({ view: "home" });
             }}
           />
+          <button
+            type="button"
+            className={`search-go ${semantic ? "search-go-active" : ""}`}
+            aria-label="语义搜索"
+            title="语义搜索"
+            onClick={() => { setSemantic((v) => !v); setOffset(0); }}
+          >
+            语
+          </button>
           <button type="submit" className="search-go" aria-label="搜索">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
               <circle cx="11" cy="11" r="7" />
