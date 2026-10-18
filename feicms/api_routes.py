@@ -1426,7 +1426,7 @@ async def embeddings_status() -> dict[str, Any]:
 @router.post("/embeddings/rebuild", dependencies=[Depends(require_admin)])
 async def embeddings_rebuild(
     force: bool = False,
-    batch_size: int = Query(64, ge=1, le=512),
+    batch_size: int = Query(128, ge=1, le=512),
     limit: int | None = Query(None, ge=1),
 ) -> dict[str, Any]:
     return await embeddings_mod.rebuild_embeddings(batch_size=batch_size, force=force, limit=limit)

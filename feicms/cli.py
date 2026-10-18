@@ -51,10 +51,11 @@ def reindex_cmd() -> None:
 @app.command("embed")
 def embed_cmd(
     force: bool = typer.Option(False, "--force", help="Recompute all vectors"),
-    batch_size: int = typer.Option(64, "--batch-size"),
+    batch_size: int = typer.Option(128, "--batch-size"),
     limit: int | None = typer.Option(None, "--limit"),
 ) -> None:
     """Build semantic-search embeddings for the library."""
+    asyncio.run(init_db())
     result = asyncio.run(rebuild_embeddings(batch_size=batch_size, force=force, limit=limit))
     console.print(result)
 

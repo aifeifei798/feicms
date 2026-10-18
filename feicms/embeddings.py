@@ -137,7 +137,10 @@ async def ensure_embeddings(video_ids: list[int]) -> int:
         return len(videos)
 
 
-async def rebuild_embeddings(batch_size: int = 64, force: bool = False, limit: int | None = None) -> dict[str, Any]:
+async def rebuild_embeddings(batch_size: int = 128, force: bool = False, limit: int | None = None) -> dict[str, Any]:
+    from .db import init_db
+
+    await init_db()
     if not embeddings_enabled():
         return {"enabled": False, "processed": 0, "added": 0, "error": "embeddings service not configured"}
     if not await service_available():
