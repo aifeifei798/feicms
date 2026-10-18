@@ -82,7 +82,7 @@ export default function Site() {
   const [filters, setFilters] = React.useState<SiteFilters | null>(null);
 
   const [q, setQ] = React.useState("");
-  const [semantic, setSemantic] = React.useState(false);
+  const [semantic, setSemantic] = React.useState(true);
   const [type, setType] = React.useState("");
   const [year, setYear] = React.useState("");
   const [offset, setOffset] = React.useState(0);
