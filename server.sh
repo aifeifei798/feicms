@@ -294,8 +294,10 @@ cmd_dev() {
 }
 
 cmd_build() {
-  if command -v pnpm >/dev/null 2>&1; then
-    (cd web && pnpm install && pnpm run build)
+  if [ -d web/node_modules ] && [ -x web/node_modules/.bin/vite ]; then
+    (cd web && pnpm run build)
+  elif command -v pnpm >/dev/null 2>&1; then
+    (cd web && pnpm install --ignore-scripts && pnpm run build)
   elif command -v npm >/dev/null 2>&1; then
     (cd web && npm install && npm run build)
   else
