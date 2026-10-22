@@ -25,7 +25,7 @@
 #   ./server.sh mcp            以 stdio 方式跑 MCP server（给 AI 客户端）
 #   ./server.sh mcp-config [--url http://localhost:8000/mcp]
 #   ./server.sh merge-duplicates [--dry-run]   合并同标题的重复影片
-#   ./server.sh optimize       一键瘦身：删重复索引 + 清冗余 play_url + 压缩 plays + VACUUM
+#   ./server.sh optimize       一键瘦身：删重复索引 + 去重源文本 + 清冗余 play_url + 压缩 plays + VACUUM
 #   ./server.sh pack-plays     把播放源 JSON 压缩存储（zlib，通常缩小到 1/6）
 #   ./server.sh passwd [--user admin] [--password xxx]
 #   ./server.sh prune          删除没有播放源的记录 / 孤儿影片

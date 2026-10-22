@@ -547,7 +547,7 @@ feicms images repair     # 崩溃/并发留下的不一致，校对状态与磁�
 ./server.sh repair-plays               # 用当前解析规则重建 plays（不联网）
 ./server.sh compact-raw                # 清理冗余 raw play_url + VACUUM 收缩库
 ./server.sh pack-plays                 # 把播放源 JSON 压缩存储（zlib）
-./server.sh optimize                   # 一键瘦身：删重复索引 + compact-raw + pack-plays + VACUUM + ANALYZE
+./server.sh optimize                   # 一键瘦身：删重复/无用索引 + 源文本去重 + compact-raw + pack-plays + VACUUM + ANALYZE
 ./server.sh db-size                    # 数据库体积体检：大小 / 压缩率 / 重复索引
 ./server.sh adult --show 20            # 前台成人过滤：看命中；--on/--off/--refresh
 ./server.sh export --out backup.jsonl --limit 10000

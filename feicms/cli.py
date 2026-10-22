@@ -721,7 +721,8 @@ def optimize_cmd() -> None:
         result = await optimize_database()
         saved = result["saved"]
         console.print(
-            f"[green]优化完成[/green] · 清理 {result['cleared_play_url']} 条 play_url · "
+            f"[green]优化完成[/green] · 去重 {result.get('deduped_items', 0)} 条源文本 · "
+            f"清理 {result['cleared_play_url']} 条 play_url · "
             f"压缩 {result['packed_plays']} 条 plays · "
             f"删除 {len(result['dropped_indexes'])} 个重复索引"
         )

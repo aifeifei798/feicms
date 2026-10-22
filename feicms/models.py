@@ -117,7 +117,6 @@ class SourceItem(Base):
     __table_args__ = (
         UniqueConstraint("source_id", "source_vod_id", name="uq_source_vod"),
         Index("ix_items_video", "video_id"),
-        Index("ix_items_updated", "updated_at"),
         # The targeted refresh (`feicms refresh`) picks its work off this column.
         Index("ix_items_checked", "last_checked_at"),
     )

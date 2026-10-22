@@ -189,8 +189,15 @@ _REDUNDANT_INDEXES = (
 )
 
 
+# Indexes nothing queries any more. They are pure write amplification and disk
+# pressure on large libraries (ix_items_updated alone is ~100 MB at 3M items).
+_UNUSED_INDEXES = (
+    ("source_items", "ix_items_updated"),
+)
+
+
 async def _drop_redundant_indexes(conn) -> list[str]:
-    """Remove duplicate indexes left over from older schemas."""
+    """Remove duplicate and unused indexes left over from older schemas."""
     if not IS_SQLITE:
         return []
     from sqlalchemy import text
@@ -202,6 +209,10 @@ async def _drop_redundant_indexes(conn) -> list[str]:
     dropped: list[str] = []
     for _table, name, keeper in _REDUNDANT_INDEXES:
         if name in existing and keeper in existing:
+            await conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+            dropped.append(name)
+    for _table, name in _UNUSED_INDEXES:
+        if name in existing:
             await conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
             dropped.append(name)
     return dropped

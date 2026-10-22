@@ -1286,9 +1286,56 @@ async def pack_plays(batch: int = 5000) -> dict[str, int]:
     return {"scanned": scanned, "packed": packed, "saved_bytes": saved}
 
 
+async def dedupe_item_text() -> dict[str, int]:
+    """Blank source-item text columns whose value is identical to the merged video.
+
+    Every source row carries a full copy of the title/metadata, but the UI reads the
+    merged `videos` row. On a 3M-item library those copies add up to hundreds of
+    megabytes. Only byte-identical values are cleared, so source-specific data is
+    never lost; a later refresh simply writes the value back if it changes.
+    """
+    if not IS_SQLITE:
+        return {"cleared": 0}
+    from sqlalchemy import text
+
+    async with session() as s:
+        result = await s.execute(
+            text(
+                """
+                UPDATE source_items AS si SET
+                  name = CASE WHEN si.name = v.name THEN '' ELSE si.name END,
+                  pic = CASE WHEN si.pic = v.pic THEN '' ELSE si.pic END,
+                  blurb = CASE WHEN si.blurb = v.blurb THEN '' ELSE si.blurb END,
+                  actor = CASE WHEN si.actor = v.actor THEN '' ELSE si.actor END,
+                  director = CASE WHEN si.director = v.director THEN '' ELSE si.director END,
+                  type_name = CASE WHEN si.type_name = v.type_name THEN '' ELSE si.type_name END,
+                  year = CASE WHEN si.year = v.year THEN '' ELSE si.year END,
+                  area = CASE WHEN si.area = v.area THEN '' ELSE si.area END,
+                  lang = CASE WHEN si.lang = v.lang THEN '' ELSE si.lang END
+                FROM videos AS v
+                WHERE v.id = si.video_id
+                  AND (
+                       (si.name <> '' AND si.name = v.name)
+                    OR (si.pic <> '' AND si.pic = v.pic)
+                    OR (si.blurb <> '' AND si.blurb = v.blurb)
+                    OR (si.actor <> '' AND si.actor = v.actor)
+                    OR (si.director <> '' AND si.director = v.director)
+                    OR (si.type_name <> '' AND si.type_name = v.type_name)
+                    OR (si.year <> '' AND si.year = v.year)
+                    OR (si.area <> '' AND si.area = v.area)
+                    OR (si.lang <> '' AND si.lang = v.lang)
+                  )
+                """
+            )
+        )
+        await s.commit()
+        return {"cleared": result.rowcount or 0}
+
+
 async def optimize_database() -> dict[str, Any]:
     """One pass of housekeeping: drop duplicate indexes, drop raw play strings,
-    compress the plays column, then VACUUM + ANALYZE. Reports the file size."""
+    remove duplicated source text, compress the plays column, then VACUUM + ANALYZE.
+    Reports the file size."""
     from sqlalchemy import text
 
     from .storage import database_bytes, packing_report
@@ -1297,6 +1344,7 @@ async def optimize_database() -> dict[str, Any]:
     before = database_bytes()
 
     dropped = await init_db()  # creates missing columns/indexes, drops duplicate ones
+    deduped = await dedupe_item_text()
     cleared = await compact_raw_plays(vacuum=False)
     packed = await pack_plays()
 
@@ -1318,6 +1366,7 @@ async def optimize_database() -> dict[str, Any]:
     after = database_bytes()
     return {
         "dropped_indexes": dropped,
+        "deduped_items": deduped["cleared"],
         "cleared_play_url": cleared["cleared"],
         "packed_plays": packed["packed"],
         "scanned": packed["scanned"],
