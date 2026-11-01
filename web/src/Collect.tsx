@@ -38,6 +38,7 @@ export default function Collect({ notify }: { notify: Notify }) {
   const [progress, setProgress] = React.useState<CollectProgress | null>(null);
   const [checkpoint, setCheckpoint] = React.useState<CollectResume | null>(null);
   const [pages, setPages] = React.useState("");
+  const [customPages, setCustomPages] = React.useState("10");
   const [resume, setResume] = React.useState(true);
   const [filter, setFilter] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -72,7 +73,17 @@ export default function Collect({ notify }: { notify: Notify }) {
     return () => clearInterval(timer);
   }, [load]);
 
-  const pageCount = pages === "" ? undefined : Number(pages);
+  const customMode = pages === "custom";
+  const customValue = Number(customPages);
+  const customValid =
+    !customMode || (customPages !== "" && Number.isFinite(customValue) && customValue >= 0);
+  const pageCount = customMode
+    ? customValid
+      ? customValue
+      : undefined
+    : pages === ""
+    ? undefined
+    : Number(pages);
   const fullSweep = pageCount === 0;
 
   const run = async (
@@ -179,12 +190,31 @@ export default function Collect({ notify }: { notify: Notify }) {
           <option value="1">1 页</option>
           <option value="3">3 页</option>
           <option value="5">5 页</option>
+          <option value="custom">自定义页数…</option>
           <option value="0">全量（每站真实页数）</option>
         </select>
-        <button className="btn btn-sm btn-primary" onClick={startAll} disabled={busy || progress?.running}>
+        {customMode && (
+          <label className="label gap-2 py-0">
+            <span className="muted text-xs">每站页数</span>
+            <input
+              className="input input-bordered input-sm w-20"
+              type="number"
+              min="0"
+              max="10000"
+              value={customPages}
+              disabled={busy || progress?.running}
+              onChange={(e) => setCustomPages(e.target.value)}
+            />
+          </label>
+        )}
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={startAll}
+          disabled={busy || progress?.running || !customValid}
+        >
           {busy || progress?.running ? "采集中…" : "采集全部"}
         </button>
-        {pages === "0" && (
+        {fullSweep && (
           <>
             <label className="label cursor-pointer gap-2 py-0">
               <input
@@ -381,8 +411,14 @@ export default function Collect({ notify }: { notify: Notify }) {
                       <button
                         className="btn btn-xs btn-outline"
                         onClick={() => collectOne(s)}
-                        disabled={progress?.running || !s.enabled}
-                        title="采集该站点（默认页数）"
+                        disabled={progress?.running || !s.enabled || !customValid}
+                        title={
+                          pageCount === undefined
+                            ? "采集该站点（默认页数）"
+                            : pageCount === 0
+                            ? "采集该站点（全量）"
+                            : `采集该站点（${pageCount} 页）`
+                        }
                       >
                         采集
                       </button>

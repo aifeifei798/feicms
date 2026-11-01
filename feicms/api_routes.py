@@ -344,7 +344,7 @@ async def delete_source(source_id: int) -> None:
 @router.post("/sources/{source_id}/collect")
 async def collect_one(
     source_id: int,
-    pages: int | None = Query(None, ge=0, le=500, description="0 = 全量遍历该站点所有页"),
+    pages: int | None = Query(None, ge=0, le=10000, description="0 = 全量遍历该站点所有页"),
 ) -> dict[str, Any]:
     async with session() as s:
         src = await s.get(Source, source_id)

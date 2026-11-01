@@ -405,7 +405,9 @@ async def collect_source(
     #            FEICMS_FULL_PAGE_CAP is only a safety brake and 0 means "no brake".
     full = pages is not None and pages <= 0
     max_pages = settings.full_page_cap if full else (pages if pages is not None else source.max_pages)
-    if full:
+    if pages is not None:
+        # An explicit count (full sweep or "walk N pages") is a hard request:
+        # walk every page instead of bailing out at the first unchanged one.
         stop_on_no_change = False
     limit = limit or settings.page_limit
     started = time.perf_counter()

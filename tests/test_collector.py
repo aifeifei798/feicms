@@ -142,6 +142,28 @@ def test_full_page_cap_is_only_a_safety_brake():
     asyncio.run(_run())
 
 
+def test_explicit_page_count_walks_every_page_even_without_changes():
+    """`pages=5` is a hard request: an unchanged page must not end the sweep early."""
+
+    async def _run() -> None:
+        src = await _make_source("显式页数站", max_pages=10)
+        first = await collect_source(src, pages=5, client=StubClient(pagecount=10, per_page=10))
+        assert first.inserted == 50
+
+        # Everything is already in the database: an incremental run (max_pages=2)
+        # still stops at the first unchanged page, an explicit 5 pages walks all
+        # five regardless of what changed.
+        incremental = await collect_source(src, client=StubClient(pagecount=10, per_page=10))
+        assert incremental.pages == 2
+
+        explicit = await collect_source(src, pages=5, client=StubClient(pagecount=10, per_page=10))
+        assert explicit.error is None
+        assert explicit.pages == 5
+        assert explicit.inserted == 0
+
+    asyncio.run(_run())
+
+
 def test_pagecount_is_derived_from_total_when_missing():
     """Sources that only report `total` still get a real page target."""
 
@@ -239,9 +261,11 @@ def test_incremental_run_stops_when_nothing_changes():
         assert first.pages == 4
         assert first.inserted == 40
 
-        # Second pass: page 1 is all duplicates, page 2 too -> stop at page 2
-        # instead of walking all 4 pages again.
-        second = await collect_source(src, pages=5, client=client)
+        # Second pass (incremental, pages=None -> max_pages): page 1 is all
+        # duplicates, page 2 too -> stop at page 2 instead of walking all 4
+        # pages again. An explicit count (pages=5) must NOT stop here - see
+        # test_explicit_page_count_walks_every_page_even_without_changes.
+        second = await collect_source(src, client=client)
         assert second.pages == 2
         assert second.inserted == 0
         assert second.skipped >= 20

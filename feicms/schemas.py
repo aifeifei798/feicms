@@ -112,7 +112,9 @@ class CollectRequest(BaseModel):
     source_ids: Optional[list[int]] = None
     names: Optional[list[str]] = None
     # None = per-source max_pages, >0 = exact page count, 0 = full sweep of the source.
-    pages: Optional[int] = Field(None, ge=0, le=500)
+    # The ceiling matches RUNAWAY_PAGE_GUARD; a source always stops earlier on its
+    # own pagecount / empty pages.
+    pages: Optional[int] = Field(None, ge=0, le=10000)
     all: bool = False
     # 断点续传 for a full sweep (pages=0): None = follow FEICMS_RESUME, False = start over.
     resume: Optional[bool] = None
