@@ -42,10 +42,9 @@ function Poster({ item, className = "" }: { item: VideoSummary | Video; classNam
           const img = e.currentTarget;
           const frame = img.parentElement;
           // Landscape posters look terrible cropped into a 3:4 frame: show them
-          // whole on top of a blurred copy of themselves as backdrop.
+          // whole (letterboxed) instead.
           if (frame && img.naturalWidth > img.naturalHeight * 1.15) {
             frame.classList.add("poster-wide");
-            frame.style.setProperty("--poster-src", `url("${img.src}")`);
           }
         }}
       />

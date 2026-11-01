@@ -664,29 +664,10 @@ body {
   height: 100%;
   object-fit: cover;
 }
-/* Landscape posters: blurred copy as backdrop, poster shown whole on top. */
-.poster-frame.poster-wide::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image: var(--poster-src, none);
-  background-size: cover;
-  filter: blur(22px);
-  opacity: 0.5;
-}
+/* Landscape posters are shown whole (letterboxed) instead of being cropped
+   into the 3:4 frame - no blurred backdrop, just the plain frame gradient. */
 .poster-frame.poster-wide img {
   object-fit: contain;
-}
-.poster-frame::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to top, color-mix(in oklab, var(--brand) 30%, transparent), transparent 45%);
-  opacity: 0;
-  transition: opacity 0.25s ease;
-}
-.poster:hover .poster-frame::after {
-  opacity: 1;
 }
 .poster-meta {
   position: absolute;
