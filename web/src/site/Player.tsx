@@ -16,7 +16,6 @@ export default function Player({ url, poster }: { url: string; poster?: string |
   const [error, setError] = React.useState<string | null>(null);
   const [needsGesture, setNeedsGesture] = React.useState(false);
   const [mutedStart, setMutedStart] = React.useState(false);
-  const [fullscreen, setFullscreen] = React.useState(false);
 
   React.useEffect(() => {
     const video = ref.current;
@@ -166,23 +165,6 @@ export default function Player({ url, poster }: { url: string; poster?: string |
     if (native) native.call(video);
   };
 
-  const toggleFullscreen = () => {
-    if (isFullscreen()) exitFullscreen();
-    else enterFullscreen();
-  };
-
-  // Keep the button label in sync with whatever the browser actually did,
-  // including the native "exit" the user finds on their own.
-  React.useEffect(() => {
-    const sync = () => setFullscreen(isFullscreen());
-    document.addEventListener("fullscreenchange", sync);
-    document.addEventListener("webkitfullscreenchange", sync);
-    return () => {
-      document.removeEventListener("fullscreenchange", sync);
-      document.removeEventListener("webkitfullscreenchange", sync);
-    };
-  }, []);
-
   // On a phone, turning sideways is the natural way to watch: the player takes
   // the whole screen by itself, and rotating back to portrait restores the
   // normal page. Only the transition is acted on, so a manual exit while still
@@ -225,14 +207,6 @@ export default function Player({ url, poster }: { url: string; poster?: string |
           静音播放中，点击开启声音
         </button>
       )}
-      <button
-        type="button"
-        className="player-fullscreen"
-        onClick={toggleFullscreen}
-        aria-label={fullscreen ? "退出全屏" : "全屏"}
-      >
-        {fullscreen ? "退出全屏" : "全屏"}
-      </button>
       {error && !needsGesture && (
         <div className="player-error">
           <span className="muted">{error}</span>

@@ -675,7 +675,9 @@ body {
   right: 0;
   bottom: 0;
   padding: 0.5rem 0.6rem;
-  background: linear-gradient(to top, rgba(6, 10, 16, 0.92), rgba(6, 10, 16, 0.55) 60%, transparent);
+  /* Flat dark translucent band: the old gradient faded to transparent where
+     the title sits, leaving it unreadable over bright covers. */
+  background: rgba(6, 10, 16, 0.72);
 }
 .poster-name {
   font-weight: 600;
@@ -951,22 +953,6 @@ body {
   background: var(--error-soft);
   border-top: 1px solid var(--color-error, #f87171);
 }
-.player-fullscreen {
-  position: absolute;
-  top: 0.5rem;
-  left: 0.5rem;
-  padding: 0.3rem 0.6rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: rgba(8, 12, 18, 0.75);
-  color: var(--text);
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-.player-fullscreen:hover {
-  border-color: var(--brand);
-  color: var(--brand);
-}
 .player-wrap:fullscreen,
 .player-wrap:-webkit-full-screen {
   border: 0;
@@ -976,13 +962,6 @@ body {
 .player-wrap:-webkit-full-screen video {
   height: 100vh;
   max-height: none;
-}
-/* In fullscreen the button becomes the only way out on a phone (there is no
-   Esc key), so it stays visible and reads as "exit fullscreen". */
-.player-wrap:fullscreen .player-fullscreen,
-.player-wrap:-webkit-full-screen .player-fullscreen {
-  background: rgba(8, 12, 18, 0.85);
-  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .episode-list {
