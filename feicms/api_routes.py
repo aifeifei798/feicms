@@ -1357,12 +1357,15 @@ async def site_videos(
             stmt = stmt.where(filter_)
 
         total = await s.scalar(select(func.count()).select_from(stmt.subquery()))
+        # "updated" means the source's own update time, not when our sweep
+        # happened to write the row - last_updated alone reflects collection
+        # order, so rows without a source time fall back to it.
         order = {
-            "updated": Video.last_updated.desc(),
+            "updated": (Video.source_time.desc(), Video.last_updated.desc()),
             "name": Video.name,
             "source_count": Video.source_count.desc(),
         }
-        videos = list(await s.scalars(stmt.order_by(order[sort]).limit(limit).offset(offset)))
+        videos = list(await s.scalars(stmt.order_by(*order[sort]).limit(limit).offset(offset)))
         pic_map = await _local_pic_map(s, [v.pic for v in videos])
         return Page(
             total=total,
@@ -1403,7 +1406,7 @@ async def site_related(
             stmt = stmt.where(filter_)
         videos = list(
             await s.scalars(
-                stmt.order_by(Video.source_count.desc(), Video.last_updated.desc()).limit(limit)
+                stmt.order_by(Video.source_time.desc(), Video.last_updated.desc()).limit(limit)
             )
         )
         pic_map = await _local_pic_map(s, [v.pic for v in videos])

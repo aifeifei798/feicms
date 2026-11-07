@@ -98,10 +98,16 @@ async def init_db() -> list[str]:
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA foreign_keys=ON"))
         await conn.run_sync(Base.metadata.create_all)
-        await _ensure_columns(conn)
+        added = await _ensure_columns(conn)
         await _ensure_indexes(conn)
         dropped = await _drop_redundant_indexes(conn)
         await _ensure_fts(conn)
+
+    # `videos.source_time` starts empty for rows collected before the column
+    # existed: fill it once from the items' source-reported vod_time. A fresh
+    # database skips this (create_all made the column, nothing to backfill).
+    if IS_SQLITE and ("videos", "source_time") in added:
+        await _backfill_source_time()
 
     # `videos.is_adult` is what the front site filters on; keep it in sync with
     # the configured keyword lists (one scan, only when they changed).
@@ -109,6 +115,20 @@ async def init_db() -> list[str]:
 
     await refresh_adult_flags()
     return dropped
+
+
+async def _backfill_source_time() -> None:
+    """One-time: seed `videos.source_time` from the newest source item."""
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE videos SET source_time = ("
+                "  SELECT MAX(si.vod_time) FROM source_items si WHERE si.video_id = videos.id"
+                ") WHERE source_time = ''"
+            )
+        )
 
 
 async def analyze() -> None:
@@ -129,22 +149,30 @@ async def rebuild_fts() -> None:
         await _ensure_fts(conn, force=True)
 
 
-async def _ensure_columns(conn) -> None:
-    """Tiny additive migration so older databases pick up new columns."""
+async def _ensure_columns(conn) -> list[tuple[str, str]]:
+    """Tiny additive migration so older databases pick up new columns.
+
+    Returns the (table, column) pairs that were actually added, so init_db can
+    run a one-time backfill for columns that need existing rows filled in.
+    """
     if not IS_SQLITE:
-        return
+        return []
     from sqlalchemy import text
 
+    added: list[tuple[str, str]] = []
     for table, column, ddl in (
         ("sources", "origin", "TEXT NOT NULL DEFAULT 'manual'"),
         ("sources", "subscription_url", "TEXT NOT NULL DEFAULT ''"),
         ("videos", "is_adult", "INTEGER NOT NULL DEFAULT 0"),
+        ("videos", "source_time", "TEXT NOT NULL DEFAULT ''"),
         ("source_items", "last_checked_at", "TEXT"),
     ):
         rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
         existing = {row[1] for row in rows}
         if column not in existing:
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            added.append((table, column))
+    return added
 
 
 async def _ensure_indexes(conn) -> None:
@@ -157,6 +185,7 @@ async def _ensure_indexes(conn) -> None:
         ("videos", "ix_videos_type_updated", "type_name, last_updated"),
         ("videos", "ix_videos_year_updated", "year, last_updated"),
         ("videos", "ix_videos_adult_updated", "is_adult, last_updated"),
+        ("videos", "ix_videos_adult_stime", "is_adult, source_time"),
         ("videos", "ix_videos_adult_type_updated", "is_adult, type_name, last_updated"),
         ("videos", "ix_videos_adult_source", "is_adult, source_count"),
         ("source_items", "ix_items_checked", "last_checked_at"),

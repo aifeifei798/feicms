@@ -76,6 +76,7 @@ class Video(Base):
         # The front site always queries "not adult" + a sort, so the flag is
         # part of the composite index and the filter becomes an index seek.
         Index("ix_videos_adult_updated", "is_adult", "last_updated"),
+        Index("ix_videos_adult_stime", "is_adult", "source_time"),
         Index("ix_videos_adult_type_updated", "is_adult", "type_name", "last_updated"),
         Index("ix_videos_adult_source", "is_adult", "source_count"),
     )
@@ -102,6 +103,10 @@ class Video(Base):
     # Materialised result of the adult-keyword sweep. The keyword OR-of-LIKEs is a
     # full table scan, so the front site filters on this indexed flag instead.
     is_adult: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The source's own "updated at" (max `vod_time` over this video's items).
+    # `last_updated` is when *our collector* last wrote the row - it reflects
+    # sweep order, not real freshness - so the site sorts on this instead.
+    source_time: Mapped[str] = mapped_column(String(30), default="")
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_updated: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 

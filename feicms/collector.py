@@ -271,6 +271,7 @@ async def upsert_page(
                 actor=item.actor,
                 director=item.director,
                 remarks=item.remarks,
+                source_time=item.vod_time,
                 source_count=0,
             )
             session_.add(video)
@@ -317,6 +318,8 @@ async def upsert_page(
             )
             video.source_count += 1
             video.last_updated = now
+            if item.vod_time and item.vod_time > (video.source_time or ""):
+                video.source_time = item.vod_time
             inserted += 1
             continue
 
@@ -348,6 +351,10 @@ async def upsert_page(
             # the `Video.before_update` listener refreshes the indexed flag.
             if not video.type_name and item.type_name:
                 video.type_name = item.type_name
+            # The source bumped its own "updated at" (new episode etc.): keep
+            # the video's real freshness ahead of the sweep order.
+            if item.vod_time and item.vod_time > (video.source_time or ""):
+                video.source_time = item.vod_time
             updated += 1
         else:
             skipped += 1

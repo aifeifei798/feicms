@@ -100,6 +100,21 @@ async def _make_source(name: str, max_pages: int) -> Source:
         return src
 
 
+def test_source_time_tracks_the_sources_own_update_time():
+    """`videos.source_time` carries the source-reported vod_time for ordering."""
+
+    async def _run() -> None:
+        src = await _make_source("源时间站", max_pages=5)
+        await collect_source(src, pages=1, client=StubClient(pagecount=2, per_page=5))
+        async with session() as s:
+            video = await s.scalar(select(Video).where(Video.name == "影片 1"))
+            assert video is not None
+            assert video.source_time == "2026-01-01 00:00:00"
+            assert video.last_updated is not None
+
+    asyncio.run(_run())
+
+
 def test_full_sweep_walks_every_page():
     async def _run() -> None:
         src = await _make_source("全量测试站", max_pages=5)
