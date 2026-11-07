@@ -26,6 +26,12 @@ export default function Player({ url, poster }: { url: string; poster?: string |
 
     let hls: { destroy: () => void } | null = null;
     const isHls = /\.m3u8(\?.*)?$/i.test(url);
+    // m3u8 goes through the backend cleaning proxy: it strips the ad blocks
+    // resource sites splice into their playlists (segments from another
+    // directory/host between EXT-X-DISCONTINUITY markers). The .ts segments
+    // themselves are still fetched by the browser straight from the upstream
+    // CDN - only the small playlist文本 rides through our server.
+    const playUrl = isHls ? `/api/site/hls?u=${encodeURIComponent(url)}` : url;
 
     const onError = () => setError("这条线路无法直接播放，换一条线路试试");
     // Any real playback clears the autoplay hint, even if play() reported a
@@ -54,25 +60,29 @@ export default function Player({ url, poster }: { url: string; poster?: string |
     };
 
     if (isHls) {
-      // hls.js is only pulled in when a line actually needs it.
+      // hls.js is only pulled in when a line actually needs it. It is preferred
+      // over native HLS even where the browser claims native support: it handles
+      // these resource-site VOD playlists far more reliably (some Chromium forks
+      // report native HLS they cannot actually demux), and iOS Safari - the one
+      // browser without MSE - falls back to its native player below.
       import("hls.js").then(({ default: Hls }) => {
+        if (Hls.isSupported()) {
+          const player = new Hls({ lowLatencyMode: true });
+          hls = player;
+          player.loadSource(playUrl);
+          player.attachMedia(video);
+          player.on(Hls.Events.MANIFEST_PARSED, () => start());
+          player.on(Hls.Events.ERROR, (_event, data) => {
+            if (data.fatal) setError(`播放失败（${data.type}），换一条线路试试`);
+          });
+          return;
+        }
         if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          video.src = url;
+          video.src = playUrl;
           start();
           return;
         }
-        if (!Hls.isSupported()) {
-          setError("浏览器不支持 HLS 播放，换一条线路试试");
-          return;
-        }
-        const player = new Hls({ lowLatencyMode: true });
-        hls = player;
-        player.loadSource(url);
-        player.attachMedia(video);
-        player.on(Hls.Events.MANIFEST_PARSED, () => start());
-        player.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) setError(`播放失败（${data.type}），换一条线路试试`);
-        });
+        setError("浏览器不支持 HLS 播放，换一条线路试试");
       });
     } else {
       video.src = url;

@@ -3,10 +3,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import secrets
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -42,7 +44,9 @@ from .config import settings, update_env_file
 from . import db
 from . import embeddings as embeddings_mod
 from .db import IS_SQLITE, session
+from .fetcher import FetchError, Fetcher
 from .health import check_source, health_check_all, health_rank
+from .hls import cached_clean
 from .images import (
     download_images,
     download_progress,
@@ -1449,3 +1453,82 @@ async def site_pic(image_id: int) -> FileResponse | RedirectResponse:
             headers={"Cache-Control": "public, max-age=86400"},
         )
     return RedirectResponse(image.url)
+
+
+# ---------------------------------------------------------------- HLS 播放列表清洗代理
+# 资源站把广告片块拼在 m3u8 里（DISCONTINUITY 隔开、分片目录/主机不同）。播放器
+# 改走这个端点：拉取上游播放列表 → 剔除广告块 → 重写绝对地址后回给浏览器，
+# .ts 分片仍由浏览器直连上游，不占服务器带宽。
+_hls_fetcher: Fetcher | None = None
+
+
+def _private_host(netloc: str) -> bool:
+    host = netloc.rsplit("@", 1)[-1].split(":")[0].strip("[]").lower()
+    if host in ("localhost", "::1") or host.endswith(".local"):
+        return True
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)$", host)
+    if match:
+        a, b = int(match.group(1)), int(match.group(2))
+        return a == 127 or a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or a == 169
+    return False
+
+
+@site_router.get("/hls", response_model=None)
+async def site_hls(u: str = Query(..., min_length=8)) -> Response:
+    """Cleaned upstream m3u8: ad blocks dropped, URLs absolutised."""
+    global _hls_fetcher
+    parts = urlsplit(u.strip())
+    if parts.scheme not in ("http", "https"):
+        raise HTTPException(400, "仅支持 http/https 的 m3u8 地址")
+    if ".m3u8" not in parts.path.lower() and "m3u8" not in (parts.query or "").lower():
+        raise HTTPException(400, "地址不是 m3u8 播放列表")
+    if _private_host(parts.netloc):
+        raise HTTPException(400, "拒绝请求内网地址")
+
+    if _hls_fetcher is None:
+        _hls_fetcher = Fetcher(timeout=15)
+    try:
+        result = await _hls_fetcher.get(u.strip())
+    except FetchError as exc:
+        raise HTTPException(502, f"拉取播放列表失败：{exc}") from exc
+
+    cleaned = cached_clean(result.final_url or u.strip(), u.strip(), result.text)
+    return Response(
+        content=cleaned,
+        media_type="application/vnd.apple.mpegurl",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+_SEG_TYPES = {".ts": "video/mp2t", ".mp4": "video/mp4", ".m4s": "video/iso.segment", ".aac": "audio/aac"}
+
+
+@site_router.get("/hls/seg", response_model=None)
+async def site_hls_seg(u: str = Query(..., min_length=8)) -> Response:
+    """Stream an upstream media segment (or AES key) back to the player.
+
+    The browser never fetches upstream CDNs directly: they hotlink-guard,
+    redirect across hosts and skip CORS headers. Segments are small (~1MB), so
+    buffering them whole through the impersonating client is fine; requests are
+    uncached to keep memory and disk out of the hot path.
+    """
+    global _hls_fetcher
+    parts = urlsplit(u.strip())
+    if parts.scheme not in ("http", "https"):
+        raise HTTPException(400, "仅支持 http/https 地址")
+    if _private_host(parts.netloc):
+        raise HTTPException(400, "拒绝请求内网地址")
+
+    if _hls_fetcher is None:
+        _hls_fetcher = Fetcher(timeout=30)
+    try:
+        result = await _hls_fetcher.get_bytes(u.strip(), max_size=32 * 1024 * 1024)
+    except FetchError as exc:
+        raise HTTPException(502, f"拉取分片失败：{exc}") from exc
+
+    suffix = Path(parts.path).suffix.lower()
+    return Response(
+        content=result.content or b"",
+        media_type=_SEG_TYPES.get(suffix, "application/octet-stream"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )

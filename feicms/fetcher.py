@@ -64,6 +64,9 @@ class FetchResult:
     latency_ms: float
     engine: str
     content: bytes | None = None
+    # Final URL after redirects - needed to resolve relative URLs in a
+    # redirected response body (e.g. HLS playlists served from another host).
+    final_url: str | None = None
 
 
 @contextlib.contextmanager
@@ -142,7 +145,10 @@ class Fetcher:
                     raise FetchError(f"HTTP {resp.status_code}: {text[:160]}")
                 if not text:
                     raise FetchError(f"empty response body from {url}")
-                return FetchResult(text, resp.status_code, (time.perf_counter() - started) * 1000, profile)
+                return FetchResult(
+                    text, resp.status_code, (time.perf_counter() - started) * 1000, profile,
+                    final_url=str(resp.url),
+                )
             except Exception as exc:  # noqa: BLE001 - retried below
                 last_error = exc
                 if attempt < settings.max_retries - 1:
@@ -155,7 +161,10 @@ class Fetcher:
             resp.raise_for_status()
             if not resp.text:
                 raise FetchError(f"empty response body from {url}")
-            return FetchResult(resp.text, resp.status_code, (time.perf_counter() - started) * 1000, "httpx")
+            return FetchResult(
+                resp.text, resp.status_code, (time.perf_counter() - started) * 1000, "httpx",
+                final_url=str(resp.url),
+            )
         except Exception as exc:  # noqa: BLE001
             message = str(last_error) or str(exc)
             raise FetchError(f"{url} -> {message}") from exc
