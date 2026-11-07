@@ -187,6 +187,9 @@ export default function Site() {
   const goToPage = (page: number) => {
     const target = Math.min(Math.max(1, Number(page) || 1), pages);
     setOffset((target - 1) * PAGE_SIZE);
+    // A new page starts at its top: the grid jumps back under the header
+    // instead of leaving the reader wherever the old page ended.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
