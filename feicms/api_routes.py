@@ -1362,7 +1362,7 @@ async def site_videos(
         # order, so rows without a source time fall back to it.
         order = {
             "updated": (Video.source_time.desc(), Video.last_updated.desc()),
-            "name": Video.name,
+            "name": (Video.name.asc(),),
             "source_count": Video.source_count.desc(),
         }
         videos = list(await s.scalars(stmt.order_by(*order[sort]).limit(limit).offset(offset)))
